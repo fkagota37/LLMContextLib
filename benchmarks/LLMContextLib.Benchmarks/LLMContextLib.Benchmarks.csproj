@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="BuildSdk" Value="$(NETCoreSdkVersion)" />
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+    <ProjectReference Include="..\..\src\LLMContextLib\LLMContextLib.csproj" />
+  </ItemGroup>
+</Project>

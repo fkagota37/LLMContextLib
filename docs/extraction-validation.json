@@ -1,0 +1,92 @@
+{
+  "Date": "2026-11-12",
+  "Purpose": "Behavior-preserving standalone extraction validation, not a performance comparison.",
+  "Build": {
+    "Command": "dotnet build LLMContextLib.sln -c Release -m:1",
+    "BuildSdk": "9.0.320",
+    "Frameworks": [
+      "net8.0",
+      "net9.0"
+    ],
+    "Warnings": 0,
+    "Errors": 0,
+    "DotnetRoot": "TestResults\\Tools\\dotnet",
+    "Reason": "Shared machine SDK stopped resolving during final checks; isolated restoration preserves the pinned SDK/runtime versions."
+  },
+  "Tests": [
+    {
+      "Report": "TestResults\\Extraction\\Final\\tests\\final_net8.0_20261112185804.trx",
+      "Passed": 99,
+      "Failed": 0
+    },
+    {
+      "Report": "TestResults\\Extraction\\Final\\tests\\final_net9.0_20261112185804.trx",
+      "Passed": 99,
+      "Failed": 0
+    }
+  ],
+  "FiniteSmoke": [
+    {
+      "Report": "TestResults\\Extraction\\Final\\smoke-net8.0.json",
+      "Runtime": ".NET 8.0.34",
+      "BuildSdk": "9.0.320",
+      "Scenarios": 7,
+      "Participants": 3,
+      "VerifiedSourceHashes": 29
+    },
+    {
+      "Report": "TestResults\\Extraction\\Final\\smoke-net9.0.json",
+      "Runtime": ".NET 9.0.22",
+      "BuildSdk": "9.0.320",
+      "Scenarios": 7,
+      "Participants": 3,
+      "VerifiedSourceHashes": 29
+    }
+  ],
+  "BoundedRamp": {
+    "ReportDirectory": "TestResults\\Extraction\\Final\\Ramp",
+    "Cases": 12,
+    "TerminalRequests": 2160,
+    "Workers": 2,
+    "QueueCapacity": 32,
+    "Rates": [
+      100,
+      500
+    ],
+    "StageMilliseconds": 300,
+    "TotalEntries": 512,
+    "Repetitions": 1,
+    "Oracle": "Enabled, full-value revision/read verification",
+    "StopReasons": [
+      "Duration"
+    ],
+    "IsPerformanceCampaign": false
+  },
+  "Isolation": {
+    "LiveCodeFilesChecked": 31,
+    "ForbiddenBuildOrSourceReferences": [],
+    "StorageFilesUnchangedExceptNamespace": [
+      "ContextPolicies.cs",
+      "ContextReadLease.cs",
+      "ContextState.cs",
+      "ContextViews.cs",
+      "LLMContextPolymorphicArray.cs",
+      "MutationDiagnostics.cs",
+      "SegmentedContextStorage.cs"
+    ],
+    "OriginalDesignRecordByteIdentical": true,
+    "AllOriginalCarriedFileHashesUnchanged": true,
+    "OriginalWorktreeStatus": [
+      "?? .vscode/",
+      "?? global.json"
+    ]
+  },
+  "Formatting": {
+    "Command": "dotnet format whitespace LLMContextLib.sln --verify-no-changes --no-restore",
+    "ExitCode": 0,
+    "WorkspaceWarnings": 0,
+    "FilesChecked": 76,
+    "Log": "TestResults\\Extraction\\format-final.log",
+    "Note": "Complete verification passed using the isolated pinned SDK after scoped whitespace fixes in the two touched files."
+  }
+}

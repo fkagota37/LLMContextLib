@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <RootNamespace>LLMContextLib.Examples.BuildInvestigation</RootNamespace>
+    <AssemblyName>LLMContextLib.Examples.BuildInvestigation</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Description>Offline, commented example of shared LLM context in a build-investigation assistant.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\LLMContextLib\LLMContextLib.csproj" />
+  </ItemGroup>
+</Project>

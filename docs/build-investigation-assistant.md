@@ -227,8 +227,9 @@ Open host phases B/C and `ContextToolAdapter.Execute`.
 titles/IDs/statuses, serializes the result, and disposes the view. No model is
 needed merely to select the operation.
 
-**Human chat:** a live orchestrator supplies the model with the README's tool
-descriptions, argument schemas, active session ID, and instructions. The model
+**Human chat:** a live orchestrator supplies the model with the
+[usage guide's tool contracts](usage-documentation.md#two-ways-in-a-person-asks-or-an-agent-decides),
+active session ID, and instructions. The model
 selects a read tool. The host executes its name/arguments through the adapter,
 then associates the resulting JSON with the original tool-call ID. It may invoke
 the model again to compose prose, or display structured results directly.

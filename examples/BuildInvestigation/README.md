@@ -10,6 +10,13 @@ records a simulated investigation, creates navigation anchors, publishes scoped
 memory, serves human/agent read requests, and reuses a configuration in a
 follow-up session.
 
+**Configuration status:** this runnable example still uses the original
+`LLMContextFactory.Create()` Text-mode path and text search, not the recommended
+`WriteOptimized` preset. The [root startup example](../../README.md#recommended-startup)
+uses the current preset. Migrating this application requires complete keys on
+entries/anchors, key-based tool search and synchronization/outcome handling;
+changing only its factory call would not be sufficient.
+
 ## Run
 
 From the repository root:
@@ -78,7 +85,8 @@ dotnet test tests\LLMContextLib.Tests\LLMContextLib.Tests.csproj -c Release --fi
 For a real integration, implement `IBuildProfiler` and `IReasoningModel`, replace
 their construction in the host, and register the read-tool contracts with your
 orchestrator. The provider-neutral schemas and usage instructions are in the
-repository README. Your application still owns scheduling, permissions,
-confirmation, external-tool error handling, and decisions after revision conflicts.
+[technical usage guide](../../docs/usage-documentation.md). Your application still
+owns scheduling, permissions, confirmation, external-tool error handling, and
+decisions after revision conflicts.
 The demonstration runs sequentially to make dependencies visible; it is not
 a concurrent scheduler or distributed cache.

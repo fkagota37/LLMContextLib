@@ -26,6 +26,10 @@ there are not current build instructions.
   concurrency, replay, and sustained-load correctness.
 - `benchmarks\LLMContextLib.Benchmarks`: conventional Scan/Indexed references,
   independent semantic oracle, fixtures, finite replays, and pressure/ramp tools.
+- `benchmarks\LLMContextLib.TokenizationBenchmarks`: separately built Lucene-backed
+  term-collection diagnostic; not in the solution or production dependency graph.
+- `benchmarks\LLMContextLib.CachingBenchmarks`: separately built owner-scoped
+  BitFaster memoization diagnostic, including per-call percentiles and retained keys.
 - `examples\BuildInvestigation`: runnable, commented human/agent context example;
   its offline adapters report no fabricated performance measurements.
 - `ContextModels.cs`: public interfaces, immutable models, options, statistics.
@@ -35,6 +39,13 @@ there are not current build instructions.
 - `ContextState.cs`: immutable entry locations, segments, postings, change preparation.
 - `ContextReadLease.cs`, `ContextViews.cs`, `ContextPolicies.cs`: captured reads
   and caller-facing selection/projection behavior.
+- `ContextIndexing.cs`, `DeferredContextIndexing.cs`: opt-in bounded prefix
+  tokenization, reserved owner-scoped background completion and coverage status.
+- `ContextExecution.cs`: optional deterministic owner-private strategy composition,
+  attribution and fixed execution reservations, configured through the factory.
+- `ContextIndexKeys.cs`: opt-in producer-owned opaque keys; no implicit NLP policy.
+- `src\LLMContextLib.Lucene`, `src\LLMContextLib.BitFaster`: optional maintained
+  collector/memo adapters in the solution; core has no dependency on either.
 - `MutationDiagnostics.cs`: optional internal preparation attribution.
 
 The tests deliberately reference the benchmark project for its oracle/fixtures.
@@ -46,15 +57,38 @@ Production has no project/package dependency on a generic engine or benchmark.
 
 - One owning client; no writable top-level session array or public storage instance.
 - Publish a complete immutable session root, including locations, ordered segments,
-  anchors, and matching search indexes, atomically.
+  anchors, and matching search indexes/coverage, atomically. Deferred mode explicitly
+  marks partial entry indexes; exact Search scans pending entries.
 - Stable canonical IDs; tombstones prevent identity reuse.
 - Strict expected revisions: conflict means conflict, with no silent retry/rebase.
 - Session and memory roots are captured independently, not cross-catalog atomically.
+- Deferred index generations do not change content revisions or refresh old reads.
+  Only derived progress may merge into speculative writes; content conflicts stay
+  strict. Queue/running reservations survive supersession until work is released.
 - Existing reads/views survive writes, removal, and owner disposal.
+- Recommend WithCurrent for synchronous reads: each callback lazily captures once,
+  releases on every exit and rejects escaped-handle access. Do not turn this into
+  a shared resettable lazy value or change explicit snapshot lifetimes.
+- Opt-in partitioned indexes require producer-owned keys. Whole-contribution
+  overrides shadow base entries before query limits. Anchors remain eager.
+  Keep strict session-wide revisions and synchronization fences; maintenance
+  generations never change content revisions. Preserve recovery/construction
+  reservations and bounded maintenance concurrency; no owner-managed producer queue.
 - Readers do not acquire a session writer gate. Writers have per-session gates;
   resource admission and memory publication have separate owner-wide gates.
-- Speculative preparation remains the default. Serialized preparation is an internal
-  experimental switch, not a promoted public option.
+- Speculative preparation remains the default. Serialized preparation has an
+  explicit experimental factory pin; never select it automatically or claim promotion.
+- Strategy recipes are immutable and each Initialize owns fresh mutable state.
+  Text-mode prefixes/queries retain canonical lexical semantics; exact Search never becomes
+  partial. Providers cannot own roots, bypass admission, or escape into read leases.
+- ProducerOwned indexing requires explicit complete keys on entries and anchors,
+  including imports and replacements. Never infer/normalize producer keys, fall
+  back to tokenization, or validate their meaning against content. Text mode stays
+  the default; producer-owned reads use SearchKeys and text-query APIs fail explicitly.
+  Shared index updates, strict revisions, admission and snapshot rules are unchanged.
+- Memo reservations are included in active bytes, independently of captured-root
+  charges. Disposal joins the worker before dropping memo state; failed initialization
+  must clean it up too. See `docs\execution-strategies.md`.
 - Estimator callbacks must be stable and non-reentrant. Account for conservative
   active/retained/view estimates without presenting them as hard heap caps.
 - Public synchronous admission has no cancellation token.

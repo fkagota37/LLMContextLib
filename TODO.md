@@ -16,6 +16,9 @@ correctness evidence; performance claims also require matched measurements.
   limits and bounded concurrent preparation, distinguishing host intake from core
   storage admission. Verify rejection, rollback, and resource recovery under large
   batches and competing writers; do not describe estimates as hard heap caps.
+  Opt-in partitioned producer-owned session Apply now reserves before construction,
+  keeps recovery headroom and bounds synchronization backlog. Imports, catalog
+  writes, producer intake and the original index path remain outside that guarantee.
 
 - [ ] **RES-02: Bound projection and read-output exposure.** View count limits do
   not bound evaluator work or intermediate allocation, and direct read arrays can
@@ -37,7 +40,9 @@ correctness evidence; performance claims also require matched measurements.
 
 - [ ] **RES-05: Revisit cancellation and admission semantics.** Synchronous calls
   have no cancellation token; admission timeout is not an end-to-end deadline.
-  Assess whether an asynchronous/cancellable surface is warranted. Specify fairness,
+  Deferred-index completion waiting now accepts cancellation, but this does not
+  cancel accepted indexing or mutation admission. Assess broader asynchronous/
+  cancellable mutation APIs. Specify fairness,
   shutdown, waiting-work bounds, and timeout semantics before introducing one;
   retain strict conflicts rather than rebasing while waiting.
 
@@ -86,10 +91,74 @@ correctness evidence; performance claims also require matched measurements.
   eligible tool pairs; measure allocation as well as elapsed time.
 
 - [ ] **PERF-04: Keep preparation-policy promotion evidence-gated.** Speculative
-  preparation remains the public default; serialization is internal/experimental.
+  preparation remains the default; the factory's serialized pin remains experimental.
   Compare wasted preparation, admission outcomes, contention, and tail latency
   using matched sources and alternating runs. Do not promote it from allocation
   improvement alone or claim broad speed/GC improvements from mixed evidence.
+
+- [ ] **PERF-05: Evaluate retained-term density and snapshot capacity.** Owner-private
+  per-entry terms now avoid old-content retokenization and are explicitly charged
+  to resident/captured-root budgets. Mostly-unique payloads retain substantially
+  more strings than repeated-word payloads. Measure realistic lexical density,
+  import/append overhead, concurrent preparation, and multiple read generations
+  before claiming an end-to-end benefit or changing capacity guidance. Any further
+  representation/sharing optimization must remain owner-bounded and preserve
+  accounting, rollback, and the existing lexical policy; do not add global interning.
+
+- [ ] **PERF-06: Validate duplicate-aware term collectors on realistic workloads.**
+  The isolated `benchmarks\LLMContextLib.TokenizationBenchmarks` experiment shows
+  large Lucene allocation savings on repeated words but regressions on distinct
+  words and incremental long-word buffers. Retained output does not shrink.
+  Optional lexically compatible factory adapters now exist, without default promotion.
+  The integrated strategy benchmark now includes full mutations, exact searches,
+  allocation and retention: savings still depend on lexical density, rather than
+  establishing a universal Lucene win. Extend realistic density mixes, package/
+  runtime overhead and input bounds before production promotion. Do not silently adopt
+  StandardAnalyzer semantics or treat this as a full Lucene backend evaluation.
+
+- [ ] **PERF-07: Evaluate owner-scoped memoization with explicit byte admission.**
+  The isolated BitFaster experiment improves whole-text cache hits but adds miss
+  overhead and retains complete text keys. LRU was preferable to foreground LFU
+  in the measured traces; default asynchronous LFU was not evaluated. Measure
+  realistic reuse, unchanged-payload fast paths, full operations, and cross-entry
+  term sharing. The optional LRU adapter now has fixed owner reservations,
+  per-entry allowances, serialized insertion, disposal and independently charged
+  escaped arrays. Integrated full-operation/retention evidence now shows the
+  default per-entry allowance bypassing 513-term values and a 4 MiB reservation
+  enabling reuse at the cost of retaining deleted text. Extend host-scale peak
+  and tail evidence; capacity alone is not a byte budget.
+
+- [ ] **PERF-08: Evaluate deferred indexing under real writer/query pressure.**
+  Opt-in bounded prefix tokenization, reserved full completion, exact fallback and
+  indexed-only coverage are implemented; synchronous indexing remains the default.
+  The integrated paced-load experiment records completion lag, exact fallback
+  tails and admission outcomes. Extend duration/offered-load sweeps, real host
+  traffic and shutdown pressure before promotion. Old-posting removal remains synchronous,
+  and background postings publication still holds the session writer gate. Consider
+  chunked/optimistic publication only with explicit snapshot, reservation and strict
+  content-conflict invariants. See `docs\deferred-indexing.md`.
+
+- [ ] **PERF-09: Define adaptation from integrated objectives.** The owner now
+  composes pinned native/Lucene collectors, optional bounded BitFaster LRU,
+  preparation scheduling and a deterministic append-aware index router. The
+  twelve-policy matched study in
+  `benchmarks\LLMContextLib.StrategyBenchmarks\README.md` records source/binary
+  fingerprints, cold/hot reuse, full completion, retained heap, admission outcomes
+  and p50/p95/p99 latency. It does not establish a universally superior default.
+  Next evaluate sustained host traffic, rate sweeps, memo eligibility/reuse and
+  foreground-versus-completion/search objectives, including the cost of full
+  postings on memo hits and Lucene's full deferred recollection. Do not introduce automatic switching
+  or backend migration without measured objectives, bounded observations, switching
+  costs and hysteresis. See `docs\execution-strategies.md`.
+
+- [ ] **PERF-10: Extend producer-owned indexing measurements.** Opt-in opaque keys
+  now bypass NLP/key generation in writes, while shared postings updates still
+  execute during Apply. The matched producer diagnostic separately measures
+  preparation, Apply and the combined pipeline; unique cold preparation can erase
+  hot-path gains. Evaluate representative producer algorithms, prepared-command
+  retention, batching and sustained offered-load/admission pressure before claiming
+  capacity or promoting a default. Keep session conflicts strict and never
+  normalize/recompute producer-owned keys implicitly.
 
 ## Release readiness
 

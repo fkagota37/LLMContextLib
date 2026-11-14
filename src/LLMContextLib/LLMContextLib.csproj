@@ -11,6 +11,8 @@
   <ItemGroup>
     <InternalsVisibleTo Include="LLMContextLib.Tests" />
     <InternalsVisibleTo Include="LLMContextLib.Benchmarks" />
+    <InternalsVisibleTo Include="LLMContextLib.Lucene" />
+    <InternalsVisibleTo Include="LLMContextLib.BitFaster" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />

@@ -19,9 +19,18 @@ public sealed class PreparationTests
             ReplayChecks.Verify(fixture, ContextTraces.Create(fixture, scenario));
     }
 
-    private static ILLMContextPolymorphicArray Create(bool serialized, LLMContextOptions? options = null) =>
-        LLMContextFactory.Create((options ?? new()) with { SerializeSessionPreparation = serialized })
-            .Initialize([ContextTests.Session(), ContextTests.Session(2)]);
+    private static ILLMContextPolymorphicArray Create(bool serialized, LLMContextOptions? options = null,
+        bool composed = false)
+    {
+        var builder = LLMContextFactory.Create((options ?? new()) with
+        { SerializeSessionPreparation = composed ? !serialized : serialized });
+        if (composed) builder = builder.WithLuceneTermCollection().WithBitFasterTermMemoization()
+            .WithExecutionStrategies(new()
+            {
+                Preparation = serialized ? ContextPreparationStrategy.Serialized : ContextPreparationStrategy.Speculative
+            });
+        return builder.Initialize([ContextTests.Session(), ContextTests.Session(2)]);
+    }
 
     private static IContextMutationResult Apply(ILLMContextPolymorphicArray owner, MutationDiagnostics diagnostic,
         long revision, string text)
@@ -32,9 +41,11 @@ public sealed class PreparationTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task GatePolicyAvoidsDiscardedPreparationWithoutRebasingOrBlockingReaders(bool serialized)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task GatePolicyAvoidsDiscardedPreparationWithoutRebasingOrBlockingReaders(bool serialized, bool composed)
     {
         using var preparing = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
@@ -50,7 +61,7 @@ public sealed class PreparationTests
                 }
                 return ContextPolicies.EstimateEntryBytes(entry);
             }
-        });
+        }, composed);
         using var old = owner.OpenRead(ContextTests.Id(1));
         var firstTrace = new MutationDiagnostics();
         var secondTrace = new MutationDiagnostics();

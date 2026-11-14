@@ -53,7 +53,11 @@ public sealed record ContextSegment(long SegmentId, long Revision, ImmutableArra
 /// <param name="CreatedAt">Application-supplied timestamp; it does not determine transcript ordering.</param>
 /// <param name="Content">One supported immutable payload; arbitrary derived payload types are rejected.</param>
 public sealed record ContextEntry(
-    Guid EntryId, long Sequence, ContextRole Role, DateTimeOffset CreatedAt, ContextContent Content);
+    Guid EntryId, long Sequence, ContextRole Role, DateTimeOffset CreatedAt, ContextContent Content)
+{
+    /// <summary>Complete producer-owned keys; required in ProducerOwned mode, absent in Text mode.</summary>
+    public ContextIndexKeys? IndexKeys { get; init; }
+}
 
 /// <summary>
 /// Base for immutable transcript payloads. Storage admits only the built-in cases below:
@@ -91,9 +95,9 @@ public sealed record SummaryContent(string Text, long ThroughSequence) : Context
 /// <param name="AnchorId">Nonempty key for creating or updating this bookmark.</param>
 /// <param name="StartEntryId">Existing first entry in the passage when the anchor is published.</param>
 /// <param name="EndEntryId">Existing last entry, at or after the start sequence.</param>
-/// <param name="Title">Nonblank navigation label, also indexed for lexical search.</param>
-/// <param name="Summary">Non-null application-authored description, also indexed.</param>
-/// <param name="Topics">Initialized non-null topic strings included in lexical search.</param>
+/// <param name="Title">Nonblank navigation label, indexed lexically in Text mode.</param>
+/// <param name="Summary">Non-null application-authored description, indexed lexically in Text mode.</param>
+/// <param name="Topics">Initialized non-null topic strings; Text mode includes them in lexical search.</param>
 /// <param name="Kind">Application-facing category; it does not change endpoint semantics.</param>
 /// <param name="SourceRevision">Session revision against which the description was authored.</param>
 /// <param name="PinnedRevision">Optional exact revision required for resolution; no history is fetched.</param>
@@ -104,7 +108,11 @@ public sealed record SummaryContent(string Text, long ThroughSequence) : Context
 /// </remarks>
 public sealed record ConversationAnchor(
     Guid AnchorId, Guid StartEntryId, Guid EndEntryId, string Title, string Summary,
-    ImmutableArray<string> Topics, AnchorKind Kind, long SourceRevision, long? PinnedRevision);
+    ImmutableArray<string> Topics, AnchorKind Kind, long SourceRevision, long? PinnedRevision)
+{
+    /// <summary>Complete producer-owned keys, independent of title, summary and topics.</summary>
+    public ContextIndexKeys? IndexKeys { get; init; }
+}
 
 /// <summary>Populated identities are conjunctive applicability conditions, not access grants.</summary>
 /// <param name="UserId">When present, the target session must belong to this user.</param>
@@ -203,7 +211,11 @@ public enum ContextMutationStatus
     /// <summary>A writer gate or estimated resource budget could not admit the operation.</summary>
     AdmissionRejected,
     /// <summary>The requested session is absent or was removed before commit.</summary>
-    NotFound
+    NotFound,
+    /// <summary>Synchronization has closed session write admission; no commands were published.</summary>
+    Synchronizing,
+    /// <summary>A working-set limit or synchronization fence requires fresh admission; no partial write.</summary>
+    SynchronizationRequired
 }
 /// <summary>Resolution against one captured root, not an assessment of an anchor's semantic truth.</summary>
 public enum AnchorTargetStatus
@@ -226,7 +238,11 @@ public enum AnchorTargetStatus
 /// <param name="CreatedAt">Application timestamp, not an ordering or concurrency token.</param>
 /// <param name="Content">Supported immutable payload to append.</param>
 public sealed record ContextEntryDraft(
-    Guid EntryId, ContextRole Role, DateTimeOffset CreatedAt, ContextContent Content);
+    Guid EntryId, ContextRole Role, DateTimeOffset CreatedAt, ContextContent Content)
+{
+    /// <summary>Complete producer-owned keys to publish with the appended payload.</summary>
+    public ContextIndexKeys? IndexKeys { get; init; }
+}
 
 /// <summary>
 /// A declarative command in an ordered session transaction. Constructing a command performs
@@ -239,7 +255,11 @@ public sealed record AppendEntries(ImmutableArray<ContextEntryDraft> Entries) : 
 /// <summary>Replace only the payload, preserving identity, sequence, role, and creation time.</summary>
 /// <param name="EntryId">Existing canonical identity, not an offset from a view.</param>
 /// <param name="Content">New immutable payload, still valid for the entry's existing role.</param>
-public sealed record ReplaceEntry(Guid EntryId, ContextContent Content) : ContextChange;
+public sealed record ReplaceEntry(Guid EntryId, ContextContent Content) : ContextChange
+{
+    /// <summary>Complete replacement keys, not a delta; required for each producer-owned replacement.</summary>
+    public ContextIndexKeys? IndexKeys { get; init; }
+}
 /// <summary>Remove an entry without renumbering survivors, reusing its identity, or repairing anchors.</summary>
 /// <param name="EntryId">Existing canonical identity to remove.</param>
 public sealed record DeleteEntry(Guid EntryId) : ContextChange;
@@ -355,6 +375,8 @@ public sealed record ModelContextItem(Guid? EntryId, Guid? MemoryId, ContextRole
 /// </remarks>
 public interface ILLMContextReadLease : IDisposable
 {
+    /// <summary>Index interpretation captured with this read; producer-owned queries use SearchKeys.</summary>
+    ContextIndexingMode IndexingMode => ContextIndexingMode.Text;
     /// <summary>The immutable session root captured by this lease, not the owner's latest value.</summary>
     LLMSessionContext Session { get; }
     /// <summary>Version of the independently captured memory catalog used by memory reads.</summary>
@@ -372,10 +394,26 @@ public interface ILLMContextReadLease : IDisposable
     /// </summary>
     ContextPage ReadPage(ContextCursor? cursor, int count);
     /// <summary>
-    /// Intersect all normalized query-term postings and order hits by sequence then anchor ID.
+    /// Intersect normalized query-term postings, scanning pending entry content in deferred
+    /// mode to preserve completeness. Order hits by sequence then anchor ID.
     /// A nonnegative limit bounds output, not search work. Empty/no-token queries return no hits.
+    /// Only available in Text mode; producer-owned indexes require SearchKeys.
     /// </summary>
     ImmutableArray<ContextSearchHit> Search(string query, int limit);
+    /// <summary>
+    /// Intersect exact opaque keys without interpreting them as text. Empty collections return no
+    /// hits. Results are exact against the captured index, not a claim about payload semantics.
+    /// In Text mode these address canonical lexical keys; pending entries use the existing fallback.
+    /// </summary>
+    ImmutableArray<ContextSearchHit> SearchKeys(ContextIndexKeys keys, int limit) =>
+        throw new NotSupportedException("This read does not support prepared-key lookup.");
+    /// <summary>Coverage of this immutable lease; later worker progress requires a new lease.</summary>
+    ContextIndexStatus IndexStatus => new(Session.Revision, 0, 0);
+    /// <summary>
+    /// Search only published postings. Deferred mode can omit matches; inspect IndexStatus.
+    /// Existing Search remains exact by scanning every pending entry when necessary.
+    /// </summary>
+    ContextIndexedSearchResult SearchIndexed(string query, int limit) => new(Search(query, limit), IndexStatus);
     /// <summary>
     /// Resolve a stored bookmark against this root. Unknown IDs throw KeyNotFoundException;
     /// known bookmarks report missing endpoints or unavailable pinned history explicitly.
@@ -441,8 +479,9 @@ public interface ILLMContextPolymorphicArray : IDisposable
     /// </summary>
     bool TryFind(Guid sessionId, out LLMSessionContext session);
     /// <summary>
-    /// Validate and index a complete immutable session before admitting it. Its initial
-    /// revision is preserved; duplicate and previously removed session IDs are rejected.
+    /// Validate a complete immutable session and prepare its index/coverage before admitting
+    /// it. Deferred mode completes entry indexes in the background. The initial revision is
+    /// preserved; duplicate and previously removed session IDs are rejected.
     /// </summary>
     IContextMutationResult CreateSession(LLMSessionContext session);
     /// <summary>
@@ -475,6 +514,31 @@ public interface ILLMContextPolymorphicArray : IDisposable
     ILLMContextView<T> OpenView<T>(ILLMContextViewDefinition<T> definition);
     /// <summary>Capture owner accounting counters, not a GC heap measurement or session/memory transaction.</summary>
     LLMContextStatistics GetStatistics();
+    /// <summary>
+    /// Wait for this exact content revision's entry indexing and session jobs to finish.
+    /// Concurrent content changes, removal, worker failure, disposal or cancellation terminate
+    /// the wait explicitly. Open a NEW lease afterward; existing leases never refresh.
+    /// Cancellation cancels only this wait, not accepted background work.
+    /// </summary>
+    Task WaitForIndexingAsync(Guid sessionId, long expectedRevision, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var read = OpenRead(sessionId);
+        if (read.Session.Revision != expectedRevision)
+            throw new InvalidOperationException("Session revision changed while waiting for indexing.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Synchronize partitioned entry indexes behind this owner. Calls join an outstanding
+    /// session operation; awaiting its durable result cannot miss completion. Session writes
+    /// pause, reads continue, and content revision does not change. Cancellation cancels only
+    /// the caller's wait. Failure preserves authoritative working sets and reopens admission.
+    /// Staged writes retain their original expected revisions and must retry admission.
+    /// </summary>
+    Task<ContextIndexSynchronization> SynchronizeIndexAsync(Guid sessionId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This owner does not support partition synchronization.");
 }
 
 /// <summary>
@@ -483,7 +547,7 @@ public interface ILLMContextPolymorphicArray : IDisposable
 /// escaped immutable roots and caller-owned read arrays cannot be forcibly reclaimed.
 /// </summary>
 /// <param name="Sessions">Number of sessions currently in the owner's directory.</param>
-/// <param name="EstimatedActiveBytes">Estimated active session/catalog/index and reserved-identity footprint.</param>
+/// <param name="EstimatedActiveBytes">Estimated active session/catalog/index, per-entry retained terms, and reserved-identity footprint.</param>
 /// <param name="EstimatedRetainedBytes">Conservative distinct captured-root charges plus projected-view output.</param>
 /// <param name="RetainedReads">Open read leases, including leases owned by views.</param>
 /// <param name="MemoryRevision">Current catalog revision when statistics are read.</param>
@@ -491,10 +555,26 @@ public interface ILLMContextPolymorphicArray : IDisposable
 /// <param name="SegmentsRewritten">Segment rewrites charged by successful session change sets, not failed preparation.</param>
 /// <param name="EstimatedSegmentBytesRewritten">Logical rewritten segment sizes, not allocated/copied payload bytes.</param>
 /// <param name="EstimatedViewBytes">Output-retention component already included in EstimatedRetainedBytes.</param>
+/// <param name="PendingIndexWork">Queued plus running deferred jobs, including superseded jobs.</param>
+/// <param name="EstimatedIndexWorkBytes">Work-reservation component already included in EstimatedActiveBytes.</param>
+/// <param name="CompletedIndexJobs">Jobs whose full index was published; not content mutations.</param>
+/// <param name="DiscardedIndexJobs">Superseded or removed jobs that were discarded.</param>
 public sealed record LLMContextStatistics(
     int Sessions, long EstimatedActiveBytes, long EstimatedRetainedBytes,
     int RetainedReads, long MemoryRevision, long PublishedMutations,
-    long SegmentsRewritten, long EstimatedSegmentBytesRewritten, long EstimatedViewBytes = 0);
+    long SegmentsRewritten, long EstimatedSegmentBytesRewritten, long EstimatedViewBytes = 0,
+    int PendingIndexWork = 0, long EstimatedIndexWorkBytes = 0,
+    long CompletedIndexJobs = 0, long DiscardedIndexJobs = 0)
+{
+    /// <summary>Already charged in EstimatedActiveBytes; not available to ordinary writes.</summary>
+    public long EstimatedSynchronizationReserveBytes { get; init; }
+    /// <summary>Outstanding preconstruction reservations, already included in active bytes.</summary>
+    public long EstimatedPreparationBytes { get; init; }
+    /// <summary>Queued and running synchronization operations.</summary>
+    public int PendingSynchronizations { get; init; }
+    /// <summary>Execution attribution when factory strategy composition is configured; otherwise null.</summary>
+    public ContextExecutionStatistics? Execution { get; init; }
+}
 
 /// <summary>
 /// Construction-time segmentation and admission policies. Limits are estimates for this
@@ -508,6 +588,41 @@ public sealed record LLMContextStatistics(
 /// </remarks>
 public sealed record LLMContextOptions
 {
+    /// <summary>
+    /// Tested producer-owned, partitioned startup preset. Copy with <c>with</c> to tune
+    /// before factory initialization; this does not change the ordinary constructor defaults.
+    /// </summary>
+    public static LLMContextOptions WriteOptimized { get; } = new()
+    {
+        IndexingMode = ContextIndexingMode.ProducerOwned,
+        MaximumEntriesPerSegment = 8,
+        MaximumEstimatedBytesPerSegment = 32 * 1024,
+        EstimatedResidentByteBudget = 512 * 1024 * 1024,
+        MaximumEstimatedRetainedBytes = 256 * 1024 * 1024,
+        MaximumRetainedReads = 2048,
+        AdmissionTimeout = TimeSpan.FromMilliseconds(5),
+        PartitionedIndex = new()
+        {
+            MaximumEstimatedPartitionBytes = 8 * 1024 * 1024,
+            MaximumWorkingSetEntries = 64,
+            MaximumEstimatedWorkingSetBytes = 4 * 1024 * 1024,
+            MaximumPendingSynchronizations = 32,
+            MaximumEstimatedPreparationBytes = 8 * 1024 * 1024,
+            WriteBehavior = ContextSynchronizationWriteBehavior.Reject
+        }
+    };
+
+    /// <summary>Null preserves the existing index path; factory opt-in requires producer-owned keys.</summary>
+    public PartitionedContextIndexOptions? PartitionedIndex { get; init; }
+    internal Action<CancellationToken>? BeforePartitionSynchronization { get; init; }
+    /// <summary>Text by default; ProducerOwned requires complete supplied entry/anchor keys.</summary>
+    public ContextIndexingMode IndexingMode { get; init; }
+    /// <summary>
+    /// Null preserves synchronous full indexing. Opt in to bounded per-entry preparation
+    /// followed by owner-managed full completion, with exact-search fallback while pending.
+    /// </summary>
+    public DeferredIndexingOptions? DeferredIndexing { get; init; }
+    internal Action<CancellationToken>? BeforeDeferredIndexing { get; init; }
     // Experimental policy, deliberately not a public configuration/default change.
     // Benchmarks/tests compare it with speculative preparation before any promotion.
     internal bool SerializeSessionPreparation { get; init; }
@@ -560,10 +675,25 @@ public sealed record LLMContextOptions
 
     internal void Validate()
     {
+        PartitionedIndex?.Validate();
+        if (PartitionedIndex is { } partitions)
+        {
+            if (IndexingMode != ContextIndexingMode.ProducerOwned || DeferredIndexing is not null)
+                throw new ArgumentException("Partitioned working sets require producer-owned indexing without deferred text work.");
+            if (checked(partitions.InfrastructureBytes + partitions.RecoveryBytes) >= EstimatedResidentByteBudget)
+                throw new ArgumentOutOfRangeException(nameof(PartitionedIndex), "Recovery headroom exceeds the resident budget.");
+        }
+        if (!Enum.IsDefined(IndexingMode)) throw new ArgumentOutOfRangeException(nameof(IndexingMode));
+        if (IndexingMode == ContextIndexingMode.ProducerOwned && DeferredIndexing is not null)
+            throw new ArgumentException("Producer-owned indexes are complete; deferred text indexing is incompatible.", nameof(DeferredIndexing));
+        DeferredIndexing?.Validate();
         if (MaximumEntriesPerSegment <= 0 || MaximumEstimatedBytesPerSegment <= 0 ||
             EstimatedResidentByteBudget <= 0 || MaximumRetainedReads <= 0 || MaximumViewResults <= 0 ||
             MaximumEstimatedRetainedBytes <= 0)
             throw new ArgumentOutOfRangeException(nameof(MaximumEntriesPerSegment), "Limits must be positive.");
+        if (DeferredIndexing is { } indexing &&
+            ContextIndexTokenizer.InfrastructureReservation(indexing.MaximumPendingEntries) > EstimatedResidentByteBudget)
+            throw new ArgumentOutOfRangeException(nameof(DeferredIndexing), "Index worker infrastructure exceeds the resident budget.");
         if (AdmissionTimeout < TimeSpan.Zero || AdmissionTimeout.TotalMilliseconds > int.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(AdmissionTimeout));
         ArgumentNullException.ThrowIfNull(TimeProvider);

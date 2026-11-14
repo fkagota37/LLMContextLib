@@ -12,6 +12,8 @@
       <IncludeAssets>runtime;build;native;contentfiles;analyzers;buildtransitive</IncludeAssets>
     </PackageReference>
     <ProjectReference Include="..\..\src\LLMContextLib\LLMContextLib.csproj" />
+    <ProjectReference Include="..\..\src\LLMContextLib.Lucene\LLMContextLib.Lucene.csproj" />
+    <ProjectReference Include="..\..\src\LLMContextLib.BitFaster\LLMContextLib.BitFaster.csproj" />
     <ProjectReference Include="..\..\benchmarks\LLMContextLib.Benchmarks\LLMContextLib.Benchmarks.csproj" />
   </ItemGroup>
   <ItemGroup>

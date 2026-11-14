@@ -48,6 +48,9 @@ public interface IContextBenchmarkParticipant : IDisposable
 
 public static class BenchmarkParticipants
 {
+    public static IContextBenchmarkParticipant Create(LLMContextFactoryBuilder builder, ContextFixture fixture) =>
+        new PolymorphicContextParticipant(builder.Initialize(fixture.Sessions));
+
     public static IContextBenchmarkParticipant Create(ParticipantKind kind, ContextFixture fixture) => kind switch
     {
         ParticipantKind.ConventionalScan => new ConventionalContextManager(fixture, indexed: false),
@@ -76,6 +79,7 @@ internal sealed class PolymorphicContextParticipant : IContextBenchmarkParticipa
     internal LLMContextStatistics Statistics => _client.GetStatistics();
     internal PolymorphicContextParticipant(ContextFixture fixture) => _client =
         LLMContextFactory.Create(fixture.Options).Initialize(fixture.Sessions);
+    internal PolymorphicContextParticipant(ILLMContextPolymorphicArray client) => _client = client;
 
     public long Revision(Guid id) => _client.TryFind(id, out var session) ? session.Revision : throw new KeyNotFoundException();
     public IContextMutationResult Apply(ContextChangeSet changes) => _client.Apply(changes);

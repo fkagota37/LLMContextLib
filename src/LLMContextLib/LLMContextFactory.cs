@@ -39,8 +39,72 @@ public sealed class LLMContextFactoryBuilder
 {
     private readonly LLMContextOptions _options;
     private readonly Func<LLMSessionContext, Guid> _selector;
-    internal LLMContextFactoryBuilder(LLMContextOptions options, Func<LLMSessionContext, Guid> selector)
-        => (_options, _selector) = (options, selector);
+    private readonly ContextExecutionRecipe? _execution;
+    internal LLMContextFactoryBuilder(LLMContextOptions options, Func<LLMSessionContext, Guid> selector,
+        ContextExecutionRecipe? execution = null)
+        => (_options, _selector, _execution) = (options, selector, execution);
+
+    /// <summary>
+    /// Return a new recipe with deterministic owner-private execution routing. Existing builders
+    /// and initialized owners are unchanged. Optional collector/memo extensions compose with it.
+    /// </summary>
+    public LLMContextFactoryBuilder WithExecutionStrategies(ContextExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return WithExecution((_execution ?? new()) with { Options = options });
+    }
+
+    /// <summary>Return a recipe pinned to the canonical native full-term collector.</summary>
+    public LLMContextFactoryBuilder WithNativeTermCollection() =>
+        WithExecution((_execution ?? new()) with
+        {
+            Collector = () => new NativeContextTermCollector(),
+            HasCustomCollector = false
+        });
+
+    /// <summary>
+    /// Return a recipe using complete producer-supplied entry/anchor keys and exact key lookups.
+    /// No text collection, memoization or deferred indexing runs in this mode.
+    /// </summary>
+    public LLMContextFactoryBuilder WithProducerOwnedIndexing()
+    {
+        var options = _options with { IndexingMode = ContextIndexingMode.ProducerOwned };
+        options.Validate();
+        _execution?.Validate(options);
+        return new(options, _selector, _execution);
+    }
+
+    /// <summary>
+    /// Return a producer-owned recipe with bounded segment-local entry-index working sets.
+    /// This also selects producer-owned indexing; anchors keep the existing eager index path.
+    /// </summary>
+    public LLMContextFactoryBuilder WithPartitionedIndexing(PartitionedContextIndexOptions? partitions = null)
+    {
+        var options = _options with
+        {
+            IndexingMode = ContextIndexingMode.ProducerOwned,
+            PartitionedIndex = partitions ?? new()
+        };
+        options.Validate();
+        _execution?.Validate(options);
+        return new(options, _selector, _execution);
+    }
+
+    /// <summary>Return a recipe without cross-input memoization or its resource reservation.</summary>
+    public LLMContextFactoryBuilder WithoutTermMemoization() =>
+        WithExecution((_execution ?? new()) with { Memo = null, MemoReservation = 0 });
+
+    internal LLMContextFactoryBuilder WithTermCollector(Func<IContextTermCollector> collector) =>
+        WithExecution((_execution ?? new()) with { Collector = collector, HasCustomCollector = true });
+
+    internal LLMContextFactoryBuilder WithTermMemo(long reservation, Func<IContextTermMemo> memo) =>
+        WithExecution((_execution ?? new()) with { Memo = memo, MemoReservation = reservation });
+
+    private LLMContextFactoryBuilder WithExecution(ContextExecutionRecipe execution)
+    {
+        execution.Validate(_options);
+        return new(_options, _selector, execution);
+    }
 
     /// <summary>
     /// Load, validate, index, and admit initial session graphs, then transfer lifetime ownership
@@ -61,7 +125,7 @@ public sealed class LLMContextFactoryBuilder
     public ILLMContextPolymorphicArray Initialize(IEnumerable<LLMSessionContext> sessions)
     {
         ArgumentNullException.ThrowIfNull(sessions);
-        var owner = new LLMContextPolymorphicArray(new SegmentedContextStorage(_options, _selector), _options);
+        var owner = new LLMContextPolymorphicArray(new SegmentedContextStorage(_options, _selector, _execution), _options);
         try
         {
             foreach (var session in sessions)

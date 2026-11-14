@@ -47,7 +47,8 @@ public static class ContextPolicies
     /// Default deterministic estimate: fixed entry overhead plus two bytes per formatted UTF-16
     /// character. It is an admission heuristic, not object-graph measurement or UTF-8 wire size.
     /// </summary>
-    public static long EstimateEntryBytes(ContextEntry entry) => checked(128L + 2L * Text(entry.Content).Length);
+    public static long EstimateEntryBytes(ContextEntry entry) =>
+        checked(128L + 2L * ContextIndexTokenizer.TextLength(entry.Content));
 
     /// <summary>
     /// One pass over UTF-16 characters followed by ordinal deduplication and ordering:

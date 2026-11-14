@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net8.0": {
+      "BitFaster.Caching": {
+        "type": "Direct",
+        "requested": "[2.6.1, 2.6.1]",
+        "resolved": "2.6.1",
+        "contentHash": "wFFvDHne7d0mzh70dnryCyCs2YhBG5xGOlKPtObLF7SmtNEqNz3RXKffOcrjpi0IcqrvRgsL/MtH5rU++uK17g=="
+      },
+      "llmcontextlib": {
+        "type": "Project"
+      }
+    },
+    "net9.0": {
+      "BitFaster.Caching": {
+        "type": "Direct",
+        "requested": "[2.6.1, 2.6.1]",
+        "resolved": "2.6.1",
+        "contentHash": "wFFvDHne7d0mzh70dnryCyCs2YhBG5xGOlKPtObLF7SmtNEqNz3RXKffOcrjpi0IcqrvRgsL/MtH5rU++uK17g=="
+      },
+      "llmcontextlib": {
+        "type": "Project"
+      }
+    }
+  }
+}

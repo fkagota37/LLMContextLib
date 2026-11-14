@@ -18,11 +18,14 @@ internal sealed class ContextReadLease : ILLMContextReadLease
     private ContextState? _state;
     private MemoryState? _memory;
     private readonly DateTimeOffset _now;
+    private readonly ContextIndexingMode _indexingMode;
     private Action? _release;
     private ContextState State => Volatile.Read(ref _state) ?? throw new ObjectDisposedException(nameof(ContextReadLease));
     private MemoryState Memory => Volatile.Read(ref _memory) ?? throw new ObjectDisposedException(nameof(ContextReadLease));
-    internal ContextReadLease(ContextState state, MemoryState memory, DateTimeOffset now, Action release)
-        => (_state, _memory, _now, _release) = (state, memory, now, release);
+    internal ContextReadLease(ContextState state, MemoryState memory, DateTimeOffset now, Action release,
+        ContextIndexingMode indexingMode = ContextIndexingMode.Text)
+        => (_state, _memory, _now, _release, _indexingMode) = (state, memory, now, release, indexingMode);
+    public ContextIndexingMode IndexingMode { get { Check(); return _indexingMode; } }
     // Keep method bodies bound to one immutable generation. These properties never obtain the
     // owner's newer state; clearing fields on disposal also avoids a disposed handle rooting
     // the entire old session indefinitely if the consumer retains the handle object itself.
@@ -30,6 +33,7 @@ internal sealed class ContextReadLease : ILLMContextReadLease
     private MemoryState memory => Memory;
     public LLMSessionContext Session { get { Check(); return state.Session; } }
     public long MemoryRevision { get { Check(); return memory.Revision; } }
+    public ContextIndexStatus IndexStatus { get { Check(); return state.IndexStatus; } }
     private void Check() => ObjectDisposedException.ThrowIf(Volatile.Read(ref _release) is null, this);
 
     // The location map and segment directory come from the same published root. Resolving
@@ -90,16 +94,40 @@ internal sealed class ContextReadLease : ILLMContextReadLease
     /// Work includes query tokenization, all inspected postings, candidate lookups, and K log K
     /// deterministic ordering before truncation. Index maintenance is charged to mutations.
     /// </summary>
-    public ImmutableArray<ContextSearchHit> Search(string query, int limit)
+    public ImmutableArray<ContextSearchHit> Search(string query, int limit) =>
+        SearchCore(QueryTerms(query, limit), limit, includePending: true);
+
+    public ContextIndexedSearchResult SearchIndexed(string query, int limit) =>
+        new(SearchCore(QueryTerms(query, limit), limit, includePending: false), IndexStatus);
+
+    public ImmutableArray<ContextSearchHit> SearchKeys(ContextIndexKeys keys, int limit)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        return SearchCore(keys.Keys, limit, includePending: true);
+    }
+
+    private ImmutableArray<string> QueryTerms(string query, int limit)
     {
         Check();
         if (limit < 0) throw new ArgumentOutOfRangeException(nameof(limit));
-        var terms = ContextPolicies.Terms(query);
+        if (_indexingMode == ContextIndexingMode.ProducerOwned)
+            throw new InvalidOperationException("Producer-owned indexes require SearchKeys; text queries are not interpreted.");
+        return ContextPolicies.Terms(query);
+    }
+
+    private ImmutableArray<ContextSearchHit> SearchCore(ImmutableArray<string> terms, int limit, bool includePending)
+    {
+        Check();
+        if (limit < 0) throw new ArgumentOutOfRangeException(nameof(limit));
         if (limit == 0 || terms.IsEmpty) return [];
         var sets = new List<ImmutableHashSet<SearchAddress>>(terms.Length);
         foreach (var term in terms)
         {
-            if (!state.Search.TryGetValue(term, out var postings)) return [];
+            if (!state.Search.TryGetValue(term, out var postings))
+            {
+                sets.Clear();
+                break;
+            }
             sets.Add(postings);
         }
         sets.Sort((left, right) => left.Count.CompareTo(right.Count));
@@ -107,7 +135,7 @@ internal sealed class ContextReadLease : ILLMContextReadLease
         // Requiring every term at one address prevents a query from accidentally combining
         // half its terms from entry text with half from an unrelated bookmark description.
         var hits = new List<ContextSearchHit>();
-        foreach (var address in sets[0])
+        foreach (var address in sets.Count == 0 ? [] : sets[0])
         {
             if (!sets.All(set => set.Contains(address)) || !TryFindEntry(address.EntryId, out var entry)) continue;
             string text = address.AnchorId.HasValue
@@ -116,8 +144,50 @@ internal sealed class ContextReadLease : ILLMContextReadLease
             hits.Add(new(entry.EntryId, address.AnchorId, text[..Math.Min(text.Length, 160)],
                 entry.Sequence, state.Session.Revision));
         }
+        foreach (var partition in state.IndexPartitions.Values)
+        {
+            var postings = new List<ImmutableHashSet<Guid>>(terms.Length);
+            foreach (string term in terms)
+            {
+                if (!partition.Search.TryGetValue(term, out var posting))
+                {
+                    postings.Clear();
+                    break;
+                }
+                postings.Add(posting);
+            }
+            postings.Sort((left, right) => left.Count.CompareTo(right.Count));
+            foreach (Guid id in postings.Count == 0 ? [] : postings[0])
+                if (!partition.Overrides.ContainsKey(id) && postings.All(set => set.Contains(id)))
+                    AddEntry(id);
+            foreach (var (id, contribution) in partition.Overrides)
+                if (contribution is not null && Matches(contribution.Terms))
+                    AddEntry(id);
+        }
+        if (includePending)
+            foreach (var (entryId, pending) in state.PendingIndexes)
+            {
+                // A prefix hit is already present. Otherwise inspect EVERY pending entry,
+                // even if another entry matched; a zero-hit-only fallback loses valid matches.
+                if (Matches(state.EntryTerms[entryId]) || !Matches(ContextIndexTokenizer.Full(pending.Content)) ||
+                    !TryFindEntry(entryId, out var entry)) continue;
+                string text = ContextPolicies.Text(entry.Content);
+                hits.Add(new(entry.EntryId, null, text[..Math.Min(text.Length, 160)],
+                    entry.Sequence, state.Session.Revision));
+            }
         return hits.OrderBy(hit => hit.Sequence).ThenBy(hit => hit.AnchorId)
             .Take(limit).ToImmutableArray();
+
+        bool Matches(ImmutableArray<string> words) =>
+            terms.All(term => words.BinarySearch(term, StringComparer.Ordinal) >= 0);
+
+        void AddEntry(Guid id)
+        {
+            if (!TryFindEntry(id, out var entry)) return;
+            string text = ContextPolicies.Text(entry.Content);
+            hits.Add(new(entry.EntryId, null, text[..Math.Min(text.Length, 160)],
+                entry.Sequence, state.Session.Revision));
+        }
     }
 
     public AnchorResolution ResolveAnchor(Guid anchorId)

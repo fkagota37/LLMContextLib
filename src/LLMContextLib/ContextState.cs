@@ -22,6 +22,10 @@ internal readonly record struct SearchAddress(Guid EntryId, Guid? AnchorId);
 /// and collision buckets can add linear work. String hashing also pays for key length.
 /// The segment directory is an AVL tree; the order directory is a persistent indexed list.
 /// A point mutation path-copies bounded segment content and tree paths, never all entries.
+/// EntryTerms retains the lexical result for each live entry in THIS generation. It is
+/// owner-private derived state, not a process-wide cache or a history of every edited payload.
+/// Publishing it with Search lets replacements/deletions reuse the old terms without
+/// tokenizing the old content again. Captured roots retain their matching term directory.
 /// </summary>
 internal sealed record ContextState(
     LLMSessionContext Session,
@@ -29,30 +33,57 @@ internal sealed record ContextState(
     ImmutableHashSet<Guid> SeenEntryIds,
     ImmutableList<EntryOrder> Order,
     ImmutableDictionary<string, ImmutableHashSet<SearchAddress>> Search,
+    ImmutableDictionary<Guid, ImmutableArray<string>> EntryTerms,
     ImmutableDictionary<long, long> SegmentBytes,
     long EstimatedBytes,
     long NextSequence,
-    long NextSegmentId);
+    long NextSegmentId)
+{
+    internal ImmutableDictionary<long, ContextIndexPartition> IndexPartitions { get; init; } =
+        ImmutableDictionary<long, ContextIndexPartition>.Empty;
+    internal ImmutableDictionary<Guid, long> EntryTermBytes { get; init; } =
+        ImmutableDictionary<Guid, long>.Empty;
+    internal ImmutableDictionary<Guid, PendingEntryIndex> PendingIndexes { get; init; } =
+        ImmutableDictionary<Guid, PendingEntryIndex>.Empty;
+    internal long IndexGeneration { get; init; }
+
+    internal ContextIndexStatus IndexStatus
+    {
+        get
+        {
+            int failed = 0;
+            string? error = null;
+            foreach (var pending in PendingIndexes.Values)
+                if (pending.Error is not null) { failed++; error ??= pending.Error; }
+            return new(Session.Revision, IndexGeneration, PendingIndexes.Count, failed, error);
+        }
+    }
+}
 
 /// <summary>
 /// A private transaction builder. Intermediate states are unreachable by readers. A point update
 /// copies/compares B references but estimates/tokenizes ONLY changed payloads. Reference identity
 /// is a safe fast path because admitted entry graphs are immutable. Deletion can additionally
 /// shift B location offsets. Replacement-only batches copy each touched segment once; mixed
-/// transactions retain the sequential path. Replacements tokenize the changed payloads but
-/// retain unchanged term memberships; this is separate from segment-array coalescing.
+/// transactions retain the sequential path. Replacements tokenize only the new payload and
+/// reuse the old entry's retained terms; unchanged memberships and equivalent term arrays
+/// remain shared. This is separate from segment-array coalescing.
 /// </summary>
 internal sealed class ContextStateBuilder
 {
     private readonly LLMContextOptions _options;
+    private readonly ContextExecution? _execution;
     private readonly bool _initializing;
+    private long? _editingSegment;
+    private bool _droppingPartition;
     internal ContextState State { get; private set; }
     internal long SegmentsRewritten { get; private set; }
     internal long BytesRewritten { get; private set; }
     internal ImmutableArray<Guid>.Builder Appended { get; } = ImmutableArray.CreateBuilder<Guid>();
 
-    internal ContextStateBuilder(ContextState state, LLMContextOptions options, bool initializing = false)
-        => (State, _options, _initializing) = (state, options, initializing);
+    internal ContextStateBuilder(ContextState state, LLMContextOptions options, bool initializing = false,
+        ContextExecution? execution = null)
+        => (State, _options, _initializing, _execution) = (state, options, initializing, execution);
 
     /// <summary>
     /// Rebuild trusted derived state from an imported immutable graph. Unlike a point mutation,
@@ -60,7 +91,8 @@ internal sealed class ContextStateBuilder
     /// search/location/tombstone metadata, and derives future sequence/segment counters.
     /// No portion is visible until the owner admits the completed root.
     /// </summary>
-    internal static ContextState Initialize(LLMSessionContext session, LLMContextOptions options)
+    internal static ContextState Initialize(LLMSessionContext session, LLMContextOptions options,
+        ContextExecution? execution = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         if (session.SessionId == Guid.Empty || session.UserId == Guid.Empty ||
@@ -72,11 +104,14 @@ internal sealed class ContextStateBuilder
             Segments = ImmutableSortedDictionary<long, ContextSegment>.Empty,
             Anchors = ImmutableDictionary<Guid, ConversationAnchor>.Empty
         };
+        // Charge the term-directory reference plus the pending-directory reference and index
+        // generation, even before entries add their directory/array/string/reservation charges.
         var initial = new ContextState(empty, ImmutableDictionary<Guid, EntryLocation>.Empty,
             ImmutableHashSet<Guid>.Empty, ImmutableList<EntryOrder>.Empty,
             ImmutableDictionary.Create<string, ImmutableHashSet<SearchAddress>>(StringComparer.Ordinal),
-            ImmutableDictionary<long, long>.Empty, 256, 0, 0);
-        var builder = new ContextStateBuilder(initial, options, initializing: true);
+            ImmutableDictionary<Guid, ImmutableArray<string>>.Empty,
+            ImmutableDictionary<long, long>.Empty, 256 + 8 + 16 + (options.PartitionedIndex is null ? 0 : 16), 0, 0);
+        var builder = new ContextStateBuilder(initial, options, initializing: true, execution: execution);
         long previousSequence = -1;
         foreach (var (id, segment) in session.Segments)
         {
@@ -136,7 +171,7 @@ internal sealed class ContextStateBuilder
                 buffer = (State.Session.Segments[location.SegmentId].Entries.ToBuilder(),
                     State.SegmentBytes[location.SegmentId]);
             var old = buffer.Entries[location.Offset];
-            var replacement = old with { Content = change.Content };
+            var replacement = old with { Content = change.Content, IndexKeys = change.IndexKeys };
 
             // Validate EVERY intermediate edit in caller order, including overwritten edits.
             // Preserve new/old estimator call order and check each intermediate segment size:
@@ -145,10 +180,9 @@ internal sealed class ContextStateBuilder
             long size = checked(buffer.Bytes + EntryBytes(replacement) - EntryBytes(old));
             if (size > _options.MaximumEstimatedBytesPerSegment)
                 throw new ArgumentException("Segment byte limit exceeded.");
-            if (!ReferenceEquals(old.Content, replacement.Content))
+            if (IndexChanged(old, replacement))
             {
-                ReplaceIndex(new SearchAddress(old.EntryId, null),
-                    ContextPolicies.Text(old.Content), ContextPolicies.Text(replacement.Content));
+                ReplaceEntryIndex(old.EntryId, replacement.Content, replacement.IndexKeys);
             }
             State = State with { EstimatedBytes = checked(State.EstimatedBytes + size - buffer.Bytes) };
             buffer.Entries[location.Offset] = replacement;
@@ -193,7 +227,11 @@ internal sealed class ContextStateBuilder
             case ReplaceEntry replace:
                 var location = Locate(replace.EntryId);
                 var segment = State.Session.Segments[location.SegmentId];
-                var replacement = segment.Entries[location.Offset] with { Content = replace.Content };
+                var replacement = segment.Entries[location.Offset] with
+                {
+                    Content = replace.Content,
+                    IndexKeys = replace.IndexKeys
+                };
                 ReplaceSegment(segment with
                 {
                     Revision = revision,
@@ -258,12 +296,16 @@ internal sealed class ContextStateBuilder
         ArgumentNullException.ThrowIfNull(draft);
         var id = draft.EntryId == Guid.Empty ? Guid.NewGuid() : draft.EntryId;
         if (State.SeenEntryIds.Contains(id)) throw new ArgumentException("Entry identities cannot be reused after deletion.");
-        var entry = new ContextEntry(id, State.NextSequence, draft.Role, draft.CreatedAt, draft.Content);
+        var entry = new ContextEntry(id, State.NextSequence, draft.Role, draft.CreatedAt, draft.Content)
+        {
+            IndexKeys = draft.IndexKeys
+        };
         ValidateEntry(entry);
         long bytes = EntryBytes(entry);
         ContextSegment? tail = State.NextSegmentId == 0 ? null : State.Session.Segments[State.NextSegmentId - 1];
         if (tail is not null && tail.Entries.Length < _options.MaximumEntriesPerSegment &&
-            checked(State.SegmentBytes[tail.SegmentId] + bytes) <= _options.MaximumEstimatedBytesPerSegment)
+            checked(State.SegmentBytes[tail.SegmentId] + bytes) <= _options.MaximumEstimatedBytesPerSegment &&
+            CanAppendIndex(tail.SegmentId, entry.IndexKeys))
             ReplaceSegment(tail with { Revision = revision, Entries = tail.Entries.Add(entry) }, existing: true);
         else
         {
@@ -277,6 +319,16 @@ internal sealed class ContextStateBuilder
             NextSequence = checked(State.NextSequence + 1)
         };
         Appended.Add(id);
+    }
+
+    private bool CanAppendIndex(long segment, ContextIndexKeys? keys)
+    {
+        if (_options.PartitionedIndex is not { } options ||
+            !State.IndexPartitions.TryGetValue(segment, out var partition)) return true;
+        long bytes = ContextIndexPartition.OverrideBytes(new(keys!.Keys, keys.EstimatedBytes));
+        return partition.Overrides.Count < options.MaximumWorkingSetEntries &&
+            checked(partition.WorkingSetBytes + bytes) <= options.MaximumEstimatedWorkingSetBytes &&
+            checked(partition.EstimatedBytes + bytes) <= options.MaximumEstimatedPartitionBytes;
     }
 
     private void ReplaceSegment(ContextSegment segment, bool existing)
@@ -343,16 +395,36 @@ internal sealed class ContextStateBuilder
         // here used to allocate/tokenize B payloads for a one-entry correction. The edit list
         // makes that work proportional to the changed payloads instead. Role/timestamp-only
         // replacements can retain postings when the immutable content object is unchanged.
+        _editingSegment = segment.SegmentId;
+        _droppingPartition = _options.PartitionedIndex is not null && segment.Entries.IsEmpty;
         foreach (var (old, entry) in edits)
         {
-            if (old is not null && entry is not null && ReferenceEquals(old.Content, entry.Content)) continue;
+            if (old is not null && entry is not null && !IndexChanged(old, entry)) continue;
             if (old is not null && entry is not null)
-                ReplaceIndex(new SearchAddress(old.EntryId, null),
-                    ContextPolicies.Text(old.Content), ContextPolicies.Text(entry.Content));
+                ReplaceEntryIndex(old.EntryId, entry.Content, entry.IndexKeys);
             else if (old is not null)
-                Index(new SearchAddress(old.EntryId, null), ContextPolicies.Text(old.Content), add: false);
+                RemoveEntryIndex(old.EntryId);
             else if (entry is not null)
-                Index(new SearchAddress(entry.EntryId, null), ContextPolicies.Text(entry.Content), add: true);
+                ReplaceEntryIndex(entry.EntryId, entry.Content, entry.IndexKeys);
+        }
+        _editingSegment = null;
+        _droppingPartition = false;
+        if (_options.PartitionedIndex is not null &&
+            State.IndexPartitions.TryGetValue(segment.SegmentId, out var partition))
+        {
+            if (segment.Entries.IsEmpty)
+                State = State with
+                {
+                    IndexPartitions = State.IndexPartitions.Remove(segment.SegmentId),
+                    EstimatedBytes = checked(State.EstimatedBytes - partition.EstimatedBytes)
+                };
+            else if (_initializing)
+            {
+                var compacted = partition.Compact();
+                if (compacted.EstimatedBytes > _options.PartitionedIndex.MaximumEstimatedPartitionBytes)
+                    throw new ArgumentException("Imported entry index exceeds the partition byte limit.");
+                StorePartition(segment.SegmentId, compacted);
+            }
         }
         State = State with
         {
@@ -376,12 +448,22 @@ internal sealed class ContextStateBuilder
     private EntryLocation Locate(Guid entryId) => State.Locations.TryGetValue(entryId, out var location)
         ? location : throw new ArgumentException("Unknown entry.");
 
+    private static bool IndexChanged(ContextEntry old, ContextEntry current) =>
+        !ReferenceEquals(old.Content, current.Content) || !ReferenceEquals(old.IndexKeys, current.IndexKeys);
+
+    private void ValidateIndexKeys(ContextIndexKeys? keys)
+    {
+        if ((_options.IndexingMode == ContextIndexingMode.ProducerOwned) != (keys is not null))
+            throw new ArgumentException("ProducerOwned mode requires explicit keys; Text mode does not accept supplied keys.");
+    }
+
     private void PutAnchor(ConversationAnchor anchor)
     {
         // Resolve against the builder's current candidate, so endpoints appended earlier in
         // this transaction are already addressable. Updating a bookmark removes its old
         // address first, including when its start entry (and therefore search address) moves.
         ArgumentNullException.ThrowIfNull(anchor);
+        ValidateIndexKeys(anchor.IndexKeys);
         if (anchor.AnchorId == Guid.Empty || string.IsNullOrWhiteSpace(anchor.Title) || anchor.Summary is null ||
             anchor.Topics.IsDefault || anchor.Topics.Any(topic => topic is null) || !Enum.IsDefined(anchor.Kind) ||
             anchor.SourceRevision < 0 || anchor.SourceRevision > checked(State.Session.Revision + 1) ||
@@ -398,7 +480,10 @@ internal sealed class ContextStateBuilder
             RemoveAnchorIndex(old);
             oldBytes = AnchorBytes(old);
         }
-        Index(new SearchAddress(anchor.StartEntryId, anchor.AnchorId), AnchorText(anchor), add: true);
+        if (_options.IndexingMode == ContextIndexingMode.ProducerOwned)
+            Index(new SearchAddress(anchor.StartEntryId, anchor.AnchorId), anchor.IndexKeys!.Keys, add: true);
+        else
+            Index(new SearchAddress(anchor.StartEntryId, anchor.AnchorId), AnchorText(anchor), add: true);
         State = State with
         {
             Session = State.Session with { Anchors = State.Session.Anchors.SetItem(anchor.AnchorId, anchor) },
@@ -406,27 +491,193 @@ internal sealed class ContextStateBuilder
         };
     }
 
-    private void RemoveAnchorIndex(ConversationAnchor anchor) =>
-        Index(new SearchAddress(anchor.StartEntryId, anchor.AnchorId), AnchorText(anchor), add: false);
+    private void RemoveAnchorIndex(ConversationAnchor anchor)
+    {
+        if (_options.IndexingMode == ContextIndexingMode.ProducerOwned)
+            Index(new SearchAddress(anchor.StartEntryId, anchor.AnchorId), anchor.IndexKeys!.Keys, add: false);
+        else
+            Index(new SearchAddress(anchor.StartEntryId, anchor.AnchorId), AnchorText(anchor), add: false);
+    }
 
     /// <summary>
-    /// Terms already returns distinct ordinal-sorted arrays. Two linear exclusion passes
+    /// Terms returns distinct ordinal-sorted arrays. Two linear exclusion passes
     /// cost O((Uold + Unew) * L) comparisons without another hash set; only D changed terms
     /// rewrite postings/dictionary paths. Tokenization and its O(C + U) storage remain.
     /// Remove all obsolete memberships before adding new ones, preserving the original
     /// decrease-before-increase checked accounting. The canonical entry address is unchanged;
     /// anchor relocation still uses its separate full remove/add path.
     /// </summary>
-    private void ReplaceIndex(SearchAddress address, string oldText, string newText)
+    private void ReplaceEntryIndex(Guid entryId, ContextContent content, ContextIndexKeys? keys)
     {
-        var oldTerms = ContextPolicies.Terms(oldText);
-        var newTerms = ContextPolicies.Terms(newText);
-        Index(address, oldTerms, add: false, except: newTerms);
-        Index(address, newTerms, add: true, except: oldTerms);
+        if (_options.IndexingMode == ContextIndexingMode.ProducerOwned)
+        {
+            _execution?.RecordSuppliedEntry();
+            SetEntryTerms(entryId, keys!.Keys, keys.EstimatedBytes);
+            return;
+        }
+        bool existing = _execution is not null && State.EntryTerms.ContainsKey(entryId);
+        RemovePendingIndex(entryId);
+        if (_execution is not null || _options.DeferredIndexing is not null)
+        {
+            var prefix = _execution is not null ? _execution.PrepareEntry(content, existing) :
+                ContextIndexTokenizer.Prefix(content, _options.DeferredIndexing!);
+            SetEntryTerms(entryId, prefix.Terms);
+            if (!prefix.Complete)
+            {
+                int characters = ContextIndexTokenizer.TextLength(content);
+                var pending = new PendingEntryIndex(content, State.EntryTerms[entryId], prefix.ResumeOffset,
+                    ContextIndexTokenizer.IndexReservation(characters), ContextIndexTokenizer.WorkReservation(characters));
+                State = State with
+                {
+                    PendingIndexes = State.PendingIndexes.SetItem(entryId, pending),
+                    EstimatedBytes = checked(State.EstimatedBytes + pending.ReservedIndexBytes)
+                };
+            }
+        }
+        else SetEntryTerms(entryId, ContextPolicies.Terms(ContextPolicies.Text(content)));
+    }
+
+    private void SetEntryTerms(Guid entryId, ImmutableArray<string> newTerms, long? preparedBytes = null)
+    {
+        bool existing = State.EntryTerms.TryGetValue(entryId, out var oldTerms);
+        if (!existing) oldTerms = [];
+        // Equivalent edits need neither a new retained array nor a path copy of this directory.
+        // The freshly tokenized candidate becomes temporary garbage, not another cache version.
+        if (existing && oldTerms.SequenceEqual(newTerms))
+        {
+            if (_options.IndexingMode == ContextIndexingMode.ProducerOwned && !oldTerms.Equals(newTerms))
+                State = State with { EntryTerms = State.EntryTerms.SetItem(entryId, newTerms) };
+            return;
+        }
+        var address = new SearchAddress(entryId, null);
+        long newBytes = preparedBytes ?? EstimateEntryTermsBytes(newTerms);
+        if (_options.PartitionedIndex is not null)
+            OverrideEntry(entryId, new(newTerms, newBytes));
+        else
+        {
+            Index(address, oldTerms, add: false, except: newTerms);
+            Index(address, newTerms, add: true, except: oldTerms);
+        }
+        long delta = checked((preparedBytes ?? EstimateEntryTermsBytes(newTerms)) -
+            (existing ? TermBytes(entryId, oldTerms) : 0));
+        State = State with
+        {
+            EntryTerms = State.EntryTerms.SetItem(entryId, newTerms),
+            EntryTermBytes = _options.PartitionedIndex is null ? State.EntryTermBytes :
+                State.EntryTermBytes.SetItem(entryId, newBytes),
+            EstimatedBytes = checked(State.EstimatedBytes + delta)
+        };
+    }
+
+    private void RemoveEntryIndex(Guid entryId)
+    {
+        RemovePendingIndex(entryId);
+        var terms = State.EntryTerms[entryId];
+        long bytes = TermBytes(entryId, terms);
+        if (_options.PartitionedIndex is not null)
+        {
+            if (!_droppingPartition) OverrideEntry(entryId, null);
+        }
+        else Index(new SearchAddress(entryId, null), terms, add: false);
+        State = State with
+        {
+            EntryTerms = State.EntryTerms.Remove(entryId),
+            EntryTermBytes = State.EntryTermBytes.Remove(entryId),
+            EstimatedBytes = checked(State.EstimatedBytes - bytes)
+        };
+    }
+
+    private long TermBytes(Guid id, ImmutableArray<string> terms) =>
+        _options.PartitionedIndex is null ? EstimateEntryTermsBytes(terms) : State.EntryTermBytes[id];
+
+    private void OverrideEntry(Guid id, PartitionContribution? value)
+    {
+        long segment = _editingSegment ?? Locate(id).SegmentId;
+        var partition = State.IndexPartitions.GetValueOrDefault(segment) ?? ContextIndexPartition.Empty;
+        ContextIndexPartition next;
+        if (_initializing)
+        {
+            long oldBytes = partition.Overrides.TryGetValue(id, out var old)
+                ? ContextIndexPartition.OverrideBytes(old) : 0;
+            next = partition with
+            {
+                Overrides = partition.Overrides.SetItem(id, value),
+                WorkingSetBytes = checked(partition.WorkingSetBytes - oldBytes +
+                    ContextIndexPartition.OverrideBytes(value))
+            };
+        }
+        else
+        {
+            try { next = partition.Override(id, value, _options.PartitionedIndex!); }
+            catch (PartitionCapacityException error) { error.SegmentId = segment; throw; }
+        }
+        StorePartition(segment, next);
+    }
+
+    private void StorePartition(long segment, ContextIndexPartition partition)
+    {
+        long oldBytes = State.IndexPartitions.TryGetValue(segment, out var old) ? old.EstimatedBytes : 0;
+        State = State with
+        {
+            IndexPartitions = State.IndexPartitions.SetItem(segment, partition),
+            EstimatedBytes = checked(State.EstimatedBytes + partition.EstimatedBytes - oldBytes)
+        };
+    }
+
+    private void RemovePendingIndex(Guid entryId)
+    {
+        if (!State.PendingIndexes.TryGetValue(entryId, out var pending)) return;
+        State = State with
+        {
+            PendingIndexes = State.PendingIndexes.Remove(entryId),
+            EstimatedBytes = checked(State.EstimatedBytes - pending.ReservedIndexBytes)
+        };
+    }
+
+    internal bool CompleteEntryIndex(Guid entryId, PendingEntryIndex pending, ImmutableArray<string> terms)
+    {
+        if (!State.PendingIndexes.TryGetValue(entryId, out var current) || !ReferenceEquals(current, pending))
+            return false;
+        // Release before checked additions in this private builder, avoiding an artificial
+        // double charge/overflow. Publication still exposes only the complete admitted root.
+        RemovePendingIndex(entryId);
+        SetEntryTerms(entryId, terms);
+        return true;
+    }
+
+    internal void RebaseIndexProgress(ContextState captured, ContextState current)
+    {
+        // Only derived progress may merge. The storage fence separately requires the SAME
+        // content root; a genuine concurrent content write still returns RevisionConflict.
+        foreach (var (id, original) in captured.PendingIndexes)
+        {
+            if (!State.PendingIndexes.TryGetValue(id, out var candidate) || !ReferenceEquals(candidate, original))
+                continue;
+            if (!current.PendingIndexes.TryGetValue(id, out var pending))
+                CompleteEntryIndex(id, original, current.EntryTerms[id]);
+            else if (!ReferenceEquals(pending, original))
+                State = State with { PendingIndexes = State.PendingIndexes.SetItem(id, pending) };
+        }
+    }
+
+    /// <summary>
+    /// Conservative admission estimate for one term-directory membership: 128 bytes for
+    /// dictionary/array overhead, eight bytes per array reference, and 32 bytes plus two per
+    /// UTF-16 character for each distinct term string. The root's extra directory reference
+    /// is charged separately in Initialize. Empty entries still own a directory membership.
+    /// This deliberately does not discount strings shared with Search or other revisions;
+    /// it is not exact heap measurement. Segment payload limits remain payload-only, while
+    /// resident and captured-root admission include this owner-private derived metadata.
+    /// </summary>
+    internal static long EstimateEntryTermsBytes(ImmutableArray<string> terms)
+    {
+        long bytes = checked(128L + 8L * terms.Length);
+        foreach (string term in terms) bytes = checked(bytes + 32L + 2L * term.Length);
+        return bytes;
     }
 
     private void Index(SearchAddress address, string text, bool add) =>
-        Index(address, ContextPolicies.Terms(text), add);
+        Index(address, _execution?.Collect(text, CancellationToken.None) ?? ContextPolicies.Terms(text), add);
 
     private void Index(SearchAddress address, ImmutableArray<string> terms, bool add, ImmutableArray<string> except = default)
     {
@@ -460,10 +711,18 @@ internal sealed class ContextStateBuilder
 
     internal static string AnchorText(ConversationAnchor anchor) =>
         $"{anchor.Title} {anchor.Summary} {string.Join(' ', anchor.Topics)}";
-    internal static long AnchorBytes(ConversationAnchor anchor) => checked(128L + 2L * AnchorText(anchor).Length);
+    internal static long AnchorBytes(ConversationAnchor anchor)
+    {
+        if (anchor.Topics.IsDefault) throw new ArgumentException("Anchor topics must be initialized.");
+        long length = checked((long)(anchor.Title?.Length ?? 0) + (anchor.Summary?.Length ?? 0) + 2);
+        foreach (string? topic in anchor.Topics) length = checked(length + (topic?.Length ?? 0));
+        if (!anchor.Topics.IsEmpty) length = checked(length + anchor.Topics.Length - 1);
+        return checked(128L + 2L * length + (anchor.IndexKeys?.EstimatedBytes ?? 0));
+    }
 
     private long EntryBytes(ContextEntry entry)
     {
+        ValidateIndexKeys(entry.IndexKeys);
         // Estimation is caller code, not heap introspection. Stability matters because updates
         // subtract old estimates and add new ones; positivity alone cannot enforce consistency.
         long estimate = _options.EntrySizeEstimator(entry);

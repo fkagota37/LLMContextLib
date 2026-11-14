@@ -66,6 +66,10 @@ public static class ContextViews
     public static ILLMContextViewDefinition<ContextSearchHit> Search(Guid sessionId, string query, int limit = 64) =>
         new Definition<ContextSearchHit>(sessionId, limit, read => read.Search(query, limit));
 
+    /// <summary>Look up producer-prepared opaque keys without tokenization or normalization.</summary>
+    public static ILLMContextViewDefinition<ContextSearchHit> SearchKeys(Guid sessionId, ContextIndexKeys keys, int limit = 64) =>
+        new Definition<ContextSearchHit>(sessionId, limit, read => read.SearchKeys(keys, limit));
+
     /// <summary>
     /// Select confirmed, unexpired memories for exactly the requested applicable scopes, ordered
     /// by MemoryId. Use an initialized empty array to request none; default arrays are invalid here.

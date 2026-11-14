@@ -39,6 +39,8 @@ internal interface ILLMContextStorage : IDisposable
     ILLMContextReadLease OpenRead(Guid id);
     IDisposable RetainOutput(long bytes);
     LLMContextStatistics Statistics();
+    Task WaitForIndexingAsync(Guid id, long revision, CancellationToken cancellationToken);
+    Task<ContextIndexSynchronization> SynchronizeIndexAsync(Guid id, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -49,7 +51,7 @@ internal interface ILLMContextStorage : IDisposable
 /// A separate short accounting gate protects budget/lease metadata, NOT ordinary point reads.
 /// Hash-based directory lookup is expected O(1), with ordinary collision/resizing caveats.
 /// </summary>
-internal sealed class SegmentedContextStorage : ILLMContextStorage
+internal sealed partial class SegmentedContextStorage : ILLMContextStorage
 {
     // A slot survives in-flight operations even after directory removal. Removed is checked
     // under Gate so a prepared writer cannot resurrect it by publishing into that old slot.
@@ -58,6 +60,10 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
         internal ContextState State = state;
         internal readonly object Gate = new();
         internal bool Removed;
+        internal bool Synchronizing;
+        internal long SynchronizationEpoch;
+        internal int Preparations;
+        internal TaskCompletionSource<ContextIndexSynchronization>? Synchronization;
     }
 
     // Lock map: session Gate or _memoryGate serializes its own publication; _resources protects
@@ -75,9 +81,34 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
     private long _activeBytes, _retainedBytes, _published, _segments, _rewrittenBytes;
     private long _viewBytes;
     private int _reads;
+    private readonly DeferredIndexingCoordinator? _indexing;
+    private readonly ContextExecution? _execution;
 
-    internal SegmentedContextStorage(LLMContextOptions options, Func<LLMSessionContext, Guid> selector)
-        => (_options, _selector) = (options, selector);
+    internal SegmentedContextStorage(LLMContextOptions options, Func<LLMSessionContext, Guid> selector,
+        ContextExecutionRecipe? execution = null)
+    {
+        (_options, _selector) = (options, selector);
+        execution?.Validate(options);
+        _execution = execution is null ? null : new(execution, options, CanDeferEntry);
+        _activeBytes = execution?.ReservedBytes ?? 0;
+        if (options.PartitionedIndex is { } partitions)
+            _activeBytes = checked(_activeBytes + partitions.RecoveryBytes + partitions.InfrastructureBytes);
+        try
+        {
+            if (options.DeferredIndexing is not null && (_execution?.UsesDeferredIndexing ?? true))
+                _indexing = new(this, options.DeferredIndexing);
+        }
+        catch { _execution?.Dispose(); throw; }
+    }
+
+    private bool CanDeferEntry(int characters)
+    {
+        lock (_resources)
+            return _indexing is not null && _indexing.CanReserveEntry(characters) &&
+                checked(ContextIndexTokenizer.IndexReservation(characters) +
+                    ContextIndexTokenizer.WorkReservation(characters)) <=
+                _options.EstimatedResidentByteBudget - _activeBytes - _retainedBytes;
+    }
 
     public bool TryFind(Guid id, out LLMSessionContext session)
     {
@@ -99,22 +130,29 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
                 throw new ArgumentException("The selected key must be SessionId.");
             // Validate/rebuild every derived directory privately before directory insertion.
             // Imported graphs do not get to supply trusted locations or search postings.
-            var state = ContextStateBuilder.Initialize(session, _options);
+            var state = ContextStateBuilder.Initialize(session, _options, _execution);
+            var work = NewIndexWork(state, previous: null);
             lock (_resources)
             {
                 // Reserve IDs for the entire owner lifetime, including after removal. Waiting
                 // for budget yields this lock, hence the second identity check after admission.
                 if (_seenSessions.Contains(session.SessionId))
                     return Result(ContextMutationStatus.InvalidOperation, session.Revision, "Session identities cannot be reused.");
-                if (!WaitForBudget(checked(state.EstimatedBytes + 48), 0, additionalRead: false))
+                if (_indexing is not null && !_indexing.CanReserve(work))
+                    return Result(ContextMutationStatus.AdmissionRejected, session.Revision, "Deferred indexing backlog or work budget exhausted.");
+                if (!WaitForBudget(checked(state.EstimatedBytes + 48 + WorkBytes(work)), 0, additionalRead: false))
                     return Result(ContextMutationStatus.AdmissionRejected, session.Revision, "Resident budget exhausted.");
                 if (_seenSessions.Contains(session.SessionId))
                     return Result(ContextMutationStatus.InvalidOperation, session.Revision, "Session identity was admitted while waiting.");
+                if (_indexing is not null && !_indexing.CanReserve(work))
+                    return Result(ContextMutationStatus.AdmissionRejected, session.Revision, "Deferred indexing backlog or work budget exhausted.");
                 if (!_sessions.TryAdd(session.SessionId, new Slot(state)))
                     return Result(ContextMutationStatus.InvalidOperation, session.Revision, "Session already exists.");
                 _seenSessions.Add(session.SessionId);
                 _activeBytes = checked(_activeBytes + state.EstimatedBytes + 48);
+                _indexing?.Reserve(work);
                 _published++;
+                _indexing?.Pulse();
             }
             return Result(ContextMutationStatus.Applied, state.Session.Revision);
         }
@@ -134,6 +172,9 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
             var current = Volatile.Read(ref slot.State);
             if (slot.Removed) return Result(ContextMutationStatus.NotFound, current.Session.Revision);
             if (current.Session.Revision != revision) return Result(ContextMutationStatus.RevisionConflict, current.Session.Revision);
+            if (slot.Synchronizing)
+                return Result(ContextMutationStatus.Synchronizing, current.Session.Revision,
+                    "Session index synchronization has closed write admission.");
             slot.Removed = true;
             _sessions.TryRemove(id, out _);
             lock (_resources)
@@ -142,6 +183,7 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
                 // ID reuse. Existing read charges are untouched and release on their own disposal.
                 _activeBytes -= current.EstimatedBytes;
                 _published++;
+                _indexing?.Pulse();
                 Monitor.PulseAll(_resources);
             }
             return Result(ContextMutationStatus.Applied, current.Session.Revision);
@@ -156,10 +198,19 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
         diagnostic?.Begin();
         Slot? slot = null;
         bool entered = false;
+        long preparationReservation = 0;
+        long synchronizationEpoch = 0;
+        bool partitionPreparation = false;
         try
         {
             if (!_sessions.TryGetValue(changes.SessionId, out slot))
                 return Finish(ContextMutationStatus.NotFound, 0, MutationDisposition.NotFound, diagnostic);
+            if (_options.PartitionedIndex is not null &&
+                !EnterPartitionAdmission(slot, out synchronizationEpoch, out bool synchronizing))
+                return Finish(synchronizing ? ContextMutationStatus.Synchronizing : ContextMutationStatus.AdmissionRejected,
+                    changes.ExpectedRevision, MutationDisposition.GateRejected, diagnostic,
+                    synchronizing ? "Session index synchronization has closed write admission." : "Session commit gate is busy.");
+            partitionPreparation = _options.PartitionedIndex is not null;
             var captured = Volatile.Read(ref slot.State);
             if (captured.Session.Revision != changes.ExpectedRevision)
                 return Finish(ContextMutationStatus.RevisionConflict, captured.Session.Revision, MutationDisposition.InitialRevisionConflict, diagnostic);
@@ -169,7 +220,7 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
             // reach W*P. Serial preparation permits one P then cheap stale checks, excluding
             // gate waiting/timeouts. It can trade wasted work for head-of-line blocking.
             // No reader uses this gate; independent sessions keep independent writer gates.
-            if (_options.SerializeSessionPreparation)
+            if (_execution?.SelectSerializedPreparation() ?? _options.SerializeSessionPreparation)
             {
                 if (!EnterWriter(slot.Gate, diagnostic))
                     return Finish(ContextMutationStatus.AdmissionRejected, captured.Session.Revision, MutationDisposition.GateRejected, diagnostic, "Session commit gate is busy.");
@@ -191,11 +242,32 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
                 // candidate; none of the builder's intermediate roots can leak into readers.
                 ContextStateBuilder.RequireInitialized(changes.Changes);
                 if (changes.Changes.IsEmpty) throw new ArgumentException("A change set cannot be empty.");
+                if (_options.PartitionedIndex is not null)
+                {
+                    if (!ReservePreparation(changes, out long reserved))
+                        return Finish(ContextMutationStatus.AdmissionRejected, captured.Session.Revision,
+                            MutationDisposition.ResourceRejected, diagnostic, "Preconstruction reservation unavailable or oversized.");
+                    preparationReservation = reserved;
+                }
                 long revision = checked(captured.Session.Revision + 1);
-                transaction = new ContextStateBuilder(captured, _options);
+                transaction = new ContextStateBuilder(captured, _options, execution: _execution);
                 transaction.ApplyChanges(changes.Changes, revision);
                 next = transaction.State with { Session = transaction.State.Session with { Revision = revision } };
                 if (diagnostic is not null) diagnostic.Prepared = true;
+            }
+            catch (PartitionCapacityException error)
+            {
+                bool canSynchronize = error.CanSynchronize &&
+                    captured.IndexPartitions.TryGetValue(error.SegmentId, out var partition) &&
+                    !partition.Overrides.IsEmpty;
+                if (canSynchronize)
+                {
+                    try { _ = SynchronizeIndexAsync(changes.SessionId, CancellationToken.None); }
+                    catch (KeyNotFoundException) { }
+                }
+                return Finish(canSynchronize ? ContextMutationStatus.SynchronizationRequired :
+                    ContextMutationStatus.AdmissionRejected, captured.Session.Revision,
+                    MutationDisposition.ResourceRejected, diagnostic, error.Message);
             }
             catch (Exception error) when (IsValidation(error))
             {
@@ -211,27 +283,49 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
             }
             if (slot.Removed)
                 return Finish(ContextMutationStatus.NotFound, captured.Session.Revision, MutationDisposition.NotFound, diagnostic);
-            // Revision checks give useful early failures; identity comparison is the final
-            // publication fence for speculative work. Never publish over a root we did not prepare.
-            if (!ReferenceEquals(captured, Volatile.Read(ref slot.State)))
-                return Finish(ContextMutationStatus.RevisionConflict, slot.State.Session.Revision, MutationDisposition.PreparedRevisionConflict, diagnostic);
+            if (_options.PartitionedIndex is not null &&
+                (slot.Synchronizing || synchronizationEpoch != slot.SynchronizationEpoch))
+                return Finish(ContextMutationStatus.SynchronizationRequired, captured.Session.Revision,
+                    MutationDisposition.GateRejected, diagnostic, "Preparation crossed an index synchronization fence.");
+            // Content identity is the final fence for speculative work. Only derived index
+            // progress may merge; an intervening content publication still conflicts.
+            var current = Volatile.Read(ref slot.State);
+            if (!ReferenceEquals(captured.Session, current.Session))
+                return Finish(ContextMutationStatus.RevisionConflict, current.Session.Revision, MutationDisposition.PreparedRevisionConflict, diagnostic);
+            if (!ReferenceEquals(captured, current))
+            {
+                transaction.RebaseIndexProgress(captured, current);
+                next = transaction.State with { Session = next.Session };
+            }
+            if (_indexing is not null)
+                next = next with { IndexGeneration = checked(current.IndexGeneration + 1) };
+            var work = NewIndexWork(next, current);
             long resourceStart = diagnostic is null ? 0 : Stopwatch.GetTimestamp();
             try
             {
                 lock (_resources)
                 {
-                    long delta = checked(next.EstimatedBytes - captured.EstimatedBytes);
-                    if (!WaitForBudget(delta, 0, additionalRead: false))
+                    long delta = checked(next.EstimatedBytes - current.EstimatedBytes);
+                    if (_options.PartitionedIndex is not null && delta > preparationReservation)
+                        return Finish(ContextMutationStatus.AdmissionRejected, current.Session.Revision,
+                            MutationDisposition.ResourceRejected, diagnostic, "Candidate exceeded its preparation reservation.");
+                    if (_indexing is not null && !_indexing.CanReserve(work))
+                        return Finish(ContextMutationStatus.AdmissionRejected, current.Session.Revision, MutationDisposition.ResourceRejected, diagnostic, "Deferred indexing backlog or work budget exhausted.");
+                    if (!WaitForBudget(checked(delta + WorkBytes(work) - preparationReservation), 0, additionalRead: false))
                         return Finish(ContextMutationStatus.AdmissionRejected, captured.Session.Revision, MutationDisposition.ResourceRejected, diagnostic, "Resident budget exhausted.");
+                    if (_indexing is not null && !_indexing.CanReserve(work))
+                        return Finish(ContextMutationStatus.AdmissionRejected, current.Session.Revision, MutationDisposition.ResourceRejected, diagnostic, "Deferred indexing backlog or work budget exhausted.");
                     // This is the session's linearization point: content, locations, order,
-                    // anchors, and search become visible as one immutable generation.
+                    // anchors, retained entry terms, and search become visible as one immutable generation.
                     // Retained old roots remain charged separately; active accounting changes
                     // only after admission, along with successful-publication statistics.
                     Volatile.Write(ref slot.State, next);
                     _activeBytes = checked(_activeBytes + delta);
+                    _indexing?.Reserve(work);
                     _published++;
                     _segments += transaction.SegmentsRewritten;
                     _rewrittenBytes += transaction.BytesRewritten;
+                    _indexing?.Pulse();
                 }
             }
             finally { if (diagnostic is not null) diagnostic.ResourceTicks = Stopwatch.GetTimestamp() - resourceStart; }
@@ -242,6 +336,13 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
         finally
         {
             if (entered) Monitor.Exit(slot!.Gate);
+            ReleasePreparation(preparationReservation);
+            if (partitionPreparation)
+                lock (slot!.Gate)
+                {
+                    slot.Preparations--;
+                    Monitor.PulseAll(slot.Gate);
+                }
             diagnostic?.End();
         }
     }
@@ -411,7 +512,7 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
             Retain(memory, memory.EstimatedBytes);
             _reads++;
         }
-        return new ContextReadLease(session, memory, now, () => Release(session, memory));
+        return new ContextReadLease(session, memory, now, () => Release(session, memory), _options.IndexingMode);
     }
 
     // The full-root charge is intentionally conservative: immutable sharing is not deduplicated
@@ -498,11 +599,21 @@ internal sealed class SegmentedContextStorage : ILLMContextStorage
         // This is operational telemetry; callers must not use it as a transactional state capture.
         lock (_resources)
             return new(_sessions.Count, _activeBytes, _retainedBytes, _reads, _memory.Revision,
-                _published, _segments, _rewrittenBytes, _viewBytes);
+                _published, _segments, _rewrittenBytes, _viewBytes, _indexing?.PendingCount ?? 0,
+                _indexing?.ReservedBytes ?? 0, _indexing?.Completed ?? 0, _indexing?.Discarded ?? 0)
+            {
+                Execution = _execution?.Snapshot(),
+                EstimatedPreparationBytes = _preparationBytes,
+                EstimatedSynchronizationReserveBytes = _options.PartitionedIndex?.RecoveryBytes ?? 0,
+                PendingSynchronizations = _synchronizations.Count
+            };
     }
 
     public void Dispose()
     {
+        StopPartitionSynchronization();
+        _indexing?.Dispose();
+        _execution?.Dispose();
         // The bridge has drained owner operations before calling here. Do not clear _retained
         // or reset read/output charges: escaped handles still need their matching release
         // callbacks and remain usable after the directory and active catalog are dropped.

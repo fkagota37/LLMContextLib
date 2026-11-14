@@ -117,6 +117,13 @@ public static class ReplayEngine
 
 public static class ReplayChecks
 {
+    public static void Verify(ContextFixture fixture, ImmutableArray<ReplayAction> trace,
+        IContextBenchmarkParticipant participant, string label)
+    {
+        using var oracle = new SemanticOracle(fixture);
+        AssertEquivalent(ReplayEngine.Execute(oracle, trace), ReplayEngine.Execute(participant, trace), label);
+    }
+
     public static void Verify(ContextFixture fixture, ImmutableArray<ReplayAction> trace)
     {
         using var oracle = new SemanticOracle(fixture);

@@ -46,6 +46,10 @@ internal sealed class LLMContextPolymorphicArray(ILLMContextStorage storage, LLM
     public IContextMutationResult ApplyMemory(MemoryChangeSet changes) => Run(() => storage.ApplyMemory(changes));
     public ILLMContextReadLease OpenRead(Guid sessionId) => Run(() => storage.OpenRead(sessionId));
     public LLMContextStatistics GetStatistics() => Run(storage.Statistics);
+    public Task WaitForIndexingAsync(Guid sessionId, long expectedRevision, CancellationToken cancellationToken = default) =>
+        Run(() => storage.WaitForIndexingAsync(sessionId, expectedRevision, cancellationToken));
+    public Task<ContextIndexSynchronization> SynchronizeIndexAsync(Guid sessionId, CancellationToken cancellationToken = default) =>
+        Run(() => storage.SynchronizeIndexAsync(sessionId, cancellationToken));
 
     public ILLMContextView<T> OpenView<T>(ILLMContextViewDefinition<T> definition)
     {

@@ -57,9 +57,11 @@ public sealed class ContextTests
         var original = session.Segments[0].Entries[0];
         long entryDelta = ContextPolicies.EstimateEntryBytes(original with { Content = new TextContent(text) }) -
             ContextPolicies.EstimateEntryBytes(original);
+        long termsDelta = ContextStateBuilder.EstimateEntryTermsBytes(ContextPolicies.Terms(text)) -
+            ContextStateBuilder.EstimateEntryTermsBytes(ContextPolicies.Terms(ContextPolicies.Text(original.Content)));
         Assert.Equal(ContextMutationStatus.Applied, Change(owner, 0,
             new ReplaceEntry(original.EntryId, new TextContent(text))).Status);
-        Assert.Equal(active + entryDelta + indexDelta, owner.GetStatistics().EstimatedActiveBytes);
+        Assert.Equal(active + entryDelta + indexDelta + termsDelta, owner.GetStatistics().EstimatedActiveBytes);
         using var after = owner.OpenRead(Id(1));
         Assert.Single(before.Search("topic0", 10));
         Assert.Equal(text.Length == 0 ? 3 : 4, after.Search("message", 10).Length);
@@ -67,7 +69,7 @@ public sealed class ContextTests
         Assert.Equal(ContextMutationStatus.InvalidOperation, Change(owner, 1,
             new ReplaceEntry(Id(1000), new TextContent("tentative index")),
             new DeleteEntry(Id(9999))).Status);
-        Assert.Equal(active + entryDelta + indexDelta, owner.GetStatistics().EstimatedActiveBytes);
+        Assert.Equal(active + entryDelta + indexDelta + termsDelta, owner.GetStatistics().EstimatedActiveBytes);
         using var rejected = owner.OpenRead(Id(1));
         Assert.Equal(after.Session, rejected.Session);
         Assert.Empty(rejected.Search("tentative", 10));
@@ -128,7 +130,138 @@ public sealed class ContextTests
         var builder = new ContextStateBuilder(state, Options);
         builder.ApplyChanges([new ReplaceEntry(Id(1000), new TextContent(newText))], 1);
         Assert.Same(state.Search, builder.State.Search);
+        Assert.Same(state.EntryTerms, builder.State.EntryTerms);
         Assert.Equal(newText, ((TextContent)builder.State.Session.Segments[0].Entries[0].Content).Text);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void RetainedEntryTermsFollowSingleBatchAndWholeSegmentReplacements(int path)
+    {
+        var state = ContextStateBuilder.Initialize(Session(), Options);
+        var builder = new ContextStateBuilder(state, Options);
+        var content = new TextContent("\u00c9CLAIR fresh FRESH 123");
+        ImmutableArray<ContextChange> changes = path switch
+        {
+            1 => [new ReplaceEntry(Id(1000), new TextContent("discarded")),
+                new ReplaceEntry(Id(1000), content)],
+            2 => [new ReplaceSegment(0, state.Session.Segments[0].Entries.SetItem(0,
+                state.Session.Segments[0].Entries[0] with { Content = content }))],
+            _ => [new ReplaceEntry(Id(1000), content)]
+        };
+        builder.ApplyChanges(changes, 1);
+
+        Assert.Equal<string>(ContextPolicies.Terms(content.Text), builder.State.EntryTerms[Id(1000)]);
+        Assert.True(state.EntryTerms[Id(1001)] == builder.State.EntryTerms[Id(1001)]);
+        Assert.Equal<string>(["message", "topic0"], state.EntryTerms[Id(1000)]);
+        Assert.False(builder.State.Search.ContainsKey("discarded"));
+        Assert.False(builder.State.Search.ContainsKey("topic0"));
+        Assert.Equal(state.Locations.Count, builder.State.EntryTerms.Count);
+    }
+
+    [Fact]
+    public void MixedAppendReplaceDeleteKeepsTermsOnlyForLiveEntriesInItsOwnGeneration()
+    {
+        var state = ContextStateBuilder.Initialize(Session(), Options);
+        var builder = new ContextStateBuilder(state, Options);
+        builder.ApplyChanges([
+            new AppendEntries([new(Id(9000), ContextRole.User, Now, new TextContent("temporary"))]),
+            new ReplaceEntry(Id(9000), new TextContent("final FINAL")),
+            new DeleteEntry(Id(1000)),
+            new DeleteEntry(Id(1001))
+        ], 1);
+        Assert.Equal(builder.State.Locations.Keys.Order(), builder.State.EntryTerms.Keys.Order());
+        Assert.Equal<string>(["final"], builder.State.EntryTerms[Id(9000)]);
+        Assert.False(builder.State.Search.ContainsKey("temporary"));
+        Assert.False(builder.State.Search.ContainsKey("topic0"));
+        Assert.False(builder.State.Search.ContainsKey("topic1"));
+        Assert.Equal(4, state.EntryTerms.Count);
+        Assert.True(state.EntryTerms.ContainsKey(Id(1000)));
+        Assert.False(state.EntryTerms.ContainsKey(Id(9000)));
+    }
+
+    [Fact]
+    public void DeletingAllEntriesReleasesTermMetadataButNotIdentityReservations()
+    {
+        var session = Session();
+        var state = ContextStateBuilder.Initialize(session, Options);
+        var builder = new ContextStateBuilder(state, Options);
+        builder.ApplyChanges(ContextPolicies.Entries(session)
+            .Select(entry => (ContextChange)new DeleteEntry(entry.EntryId)).ToImmutableArray(), 1);
+        var empty = session with
+        {
+            Segments = session.Segments.ToImmutableSortedDictionary(pair => pair.Key,
+                pair => pair.Value with { Entries = [] })
+        };
+        var emptyState = ContextStateBuilder.Initialize(empty, Options);
+
+        Assert.Empty(builder.State.EntryTerms);
+        Assert.Empty(builder.State.Search);
+        Assert.Equal(emptyState.EstimatedBytes + 48L * state.EntryTerms.Count, builder.State.EstimatedBytes);
+        Assert.Equal(state.SeenEntryIds, builder.State.SeenEntryIds);
+        Assert.Equal(4, state.EntryTerms.Count);
+    }
+
+    [Fact]
+    public void TermMetadataParticipatesInCreationMutationAndCapturedRootAdmission()
+    {
+        var session = Session();
+        var state = ContextStateBuilder.Initialize(session, Options);
+        using (var rejected = LLMContextFactory.Create(Options with
+        {
+            AdmissionTimeout = TimeSpan.Zero,
+            EstimatedResidentByteBudget = state.EstimatedBytes + 47
+        }).Initialize([]))
+        {
+            Assert.Equal(ContextMutationStatus.AdmissionRejected, rejected.CreateSession(session).Status);
+            Assert.Equal(0, rejected.GetStatistics().EstimatedActiveBytes);
+            Assert.False(rejected.TryFind(session.SessionId, out _));
+        }
+
+        var change = new ReplaceEntry(Id(1000), new TextContent("a b c d e f g h"));
+        var candidate = new ContextStateBuilder(state, Options);
+        candidate.ApplyChanges([change], 1);
+        Assert.True(ContextStateBuilder.EstimateEntryTermsBytes(candidate.State.EntryTerms[Id(1000)]) >
+            ContextStateBuilder.EstimateEntryTermsBytes(state.EntryTerms[Id(1000)]));
+        using (var tight = Create(session, Options with
+        {
+            AdmissionTimeout = TimeSpan.Zero,
+            EstimatedResidentByteBudget = candidate.State.EstimatedBytes + 47
+        }))
+        {
+            var before = tight.GetStatistics();
+            Assert.Equal(ContextMutationStatus.AdmissionRejected, Change(tight, 0, change).Status);
+            Assert.Equal(before, tight.GetStatistics());
+            Assert.Equal(ContextMutationStatus.Applied, Change(tight, 0,
+                new ReplaceEntry(Id(1000), new TextContent("TOPIC0 message"))).Status);
+        }
+
+        using (var retentionLimited = Create(session, Options with
+        {
+            AdmissionTimeout = TimeSpan.Zero,
+            MaximumEstimatedRetainedBytes = state.EstimatedBytes - 1
+        }))
+        {
+            var before = retentionLimited.GetStatistics();
+            Assert.Throws<InvalidOperationException>(() => retentionLimited.OpenRead(session.SessionId));
+            Assert.Equal(before, retentionLimited.GetStatistics());
+        }
+
+        using var owner = Create(session);
+        using var retained = owner.OpenRead(session.SessionId);
+        Assert.Equal(state.EstimatedBytes + 48, owner.GetStatistics().EstimatedActiveBytes);
+        Assert.Equal(state.EstimatedBytes, owner.GetStatistics().EstimatedRetainedBytes);
+        Assert.Equal(ContextMutationStatus.Applied, Change(owner, 0, change).Status);
+        Assert.Equal(candidate.State.EstimatedBytes + 48, owner.GetStatistics().EstimatedActiveBytes);
+        Assert.Equal(state.EstimatedBytes, owner.GetStatistics().EstimatedRetainedBytes);
+        Assert.Equal(ContextMutationStatus.Applied, owner.RemoveSession(session.SessionId, 1).Status);
+        Assert.Equal(48, owner.GetStatistics().EstimatedActiveBytes);
+        Assert.Single(retained.Search("topic0", 10));
+        Assert.Equal(state.EstimatedBytes, owner.GetStatistics().EstimatedRetainedBytes);
+        retained.Dispose();
+        Assert.Equal(0, owner.GetStatistics().EstimatedRetainedBytes);
     }
 
     [Theory]

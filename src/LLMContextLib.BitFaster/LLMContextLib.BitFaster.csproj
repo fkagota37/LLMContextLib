@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <Authors>felix kagota</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Description>Experimental optional owner-bounded BitFaster term memoization for LLMContextLib.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BitFaster.Caching" Version="[2.6.1]" />
+    <ProjectReference Include="..\LLMContextLib\LLMContextLib.csproj" />
+    <InternalsVisibleTo Include="LLMContextLib.Tests" />
+  </ItemGroup>
+</Project>

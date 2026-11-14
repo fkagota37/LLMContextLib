@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="BuildSdk" Value="$(NETCoreSdkVersion)" />
+    <ProjectReference Include="..\..\src\LLMContextLib\LLMContextLib.csproj" />
+    <ProjectReference Include="..\..\src\LLMContextLib.Lucene\LLMContextLib.Lucene.csproj" />
+    <ProjectReference Include="..\..\src\LLMContextLib.BitFaster\LLMContextLib.BitFaster.csproj" />
+    <ProjectReference Include="..\LLMContextLib.Benchmarks\LLMContextLib.Benchmarks.csproj" />
+  </ItemGroup>
+</Project>

@@ -12,6 +12,13 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (args.Contains("--deferred-indexing", StringComparer.Ordinal))
+        {
+            var result = await DeferredIndexingExperiment.Run(args.Contains("--reverse", StringComparer.Ordinal));
+            RunEvidence.Save(Value(args, "--output"),
+                "Deferred indexing: public-call timing, natural completion, separately gated query diagnostic", result, args);
+            return 0;
+        }
         if (args.Contains("--ramp-case", StringComparer.Ordinal))
         {
             var descriptor = System.Text.Json.JsonSerializer.Deserialize<RampCase>(Value(args, "--ramp-case")!)!;

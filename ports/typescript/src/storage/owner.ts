@@ -28,10 +28,16 @@ export class LLMContextOwner {
   private readonly memoryStore = new MemoryStore();
   private readonly indexStore = new IndexStore();
   private readonly sessions = new Map<Guid, LLMSessionContext>();
+  private readonly activeReads = new Set<ContextReadLease>();
   private memoryRevision = 0;
+  private publishedMutations = 0;
+  private retainedReads = 0;
 
   public initialize(sessions: readonly LLMSessionContext[]): void {
     this.sessions.clear();
+    this.activeReads.clear();
+    this.publishedMutations = 0;
+    this.retainedReads = 0;
     this.indexStore.clear();
     for (const session of sessions) {
       const clone = this.cloneSession(session);
@@ -89,6 +95,7 @@ export class LLMContextOwner {
 
     this.sessions.set(changes.SessionId, this.cloneSession(session));
     this.reindexSession(this.sessions.get(changes.SessionId) ?? session);
+    this.publishedMutations += 1;
     return result;
   }
 
@@ -99,6 +106,7 @@ export class LLMContextOwner {
     }
 
     this.memoryRevision = Math.max(this.memoryRevision, changes.ExpectedRevision + 1);
+    this.publishedMutations += 1;
     return new ContextMutationResult(ContextMutationStatus.Applied, this.memoryRevision, null, []);
   }
 
@@ -107,7 +115,14 @@ export class LLMContextOwner {
     if (!current) {
       throw new Error(`Session ${sessionId} was not found.`);
     }
-    return new ContextReadLease(this.cloneSession(current), this.memoryRevision);
+
+    const lease = new ContextReadLease(this.cloneSession(current), this.memoryRevision, () => {
+      this.activeReads.delete(lease);
+      this.retainedReads = this.activeReads.size;
+    });
+    this.activeReads.add(lease);
+    this.retainedReads = this.activeReads.size;
+    return lease;
   }
 
   public openView<T>(definition: { readonly SessionId: Guid; readonly MaximumResults: number; Evaluate(context: ContextReadLease): Iterable<T> }): Iterable<T> {
@@ -133,21 +148,26 @@ export class LLMContextOwner {
     readonly SegmentsRewritten: number;
     readonly EstimatedSegmentBytesRewritten: number;
   } {
+    const estimatedActiveBytes = Array.from(this.sessions.values()).reduce((total, session) => total + this.estimateSessionBytes(session), 0);
+    const estimatedRetainedBytes = this.retainedReads * 512;
     return {
       Sessions: this.sessions.size,
-      EstimatedActiveBytes: this.sessions.size * 1024,
-      EstimatedRetainedBytes: this.sessions.size * 512,
-      RetainedReads: 0,
+      EstimatedActiveBytes: estimatedActiveBytes,
+      EstimatedRetainedBytes: estimatedRetainedBytes,
+      RetainedReads: this.retainedReads,
       MemoryRevision: this.memoryRevision,
-      PublishedMutations: this.memoryRevision,
+      PublishedMutations: this.publishedMutations,
       SegmentsRewritten: 0,
       EstimatedSegmentBytesRewritten: 0,
     };
   }
 
   public dispose(): void {
+    this.activeReads.clear();
+    this.retainedReads = 0;
     this.sessions.clear();
     this.memoryRevision = 0;
+    this.publishedMutations = 0;
   }
 
   public getStore(): SessionStore {
@@ -177,6 +197,36 @@ export class LLMContextOwner {
       Segments: segments,
       Anchors: anchors,
     };
+  }
+
+  private estimateSessionBytes(session: LLMSessionContext): number {
+    let total = 128;
+    for (const segment of session.Segments.values()) {
+      total += 64;
+      for (const entry of segment.Entries) {
+        total += 64;
+        total += this.estimateContentBytes(entry);
+      }
+    }
+    for (const anchor of session.Anchors.values()) {
+      total += 64 + anchor.Title.length + anchor.Summary.length;
+    }
+    return total;
+  }
+
+  private estimateContentBytes(entry: ContextEntry): number {
+    const kind = 'kind' in entry.Content ? String(entry.Content.kind) : '';
+    const base = entry.EntryId.length + entry.CreatedAt.length + kind.length;
+    if ('text' in entry.Content && typeof entry.Content.text === 'string') {
+      return base + entry.Content.text.length * 2;
+    }
+    if ('argumentsJson' in entry.Content && typeof entry.Content.argumentsJson === 'string') {
+      return base + entry.Content.argumentsJson.length * 2;
+    }
+    if ('resultJson' in entry.Content && typeof entry.Content.resultJson === 'string') {
+      return base + entry.Content.resultJson.length * 2;
+    }
+    return base;
   }
 
   private reindexSession(session: LLMSessionContext): void {

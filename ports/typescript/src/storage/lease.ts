@@ -21,10 +21,13 @@ import type { ContextCursor, ContextPage, ILLMContextReadLease } from '../domain
 export class ContextReadLease implements ILLMContextReadLease {
   public readonly Session: LLMSessionContext;
   public readonly MemoryRevision: number;
+  private readonly onDispose: (() => void) | null;
+  private disposed = false;
 
-  constructor(session: LLMSessionContext, memoryRevision: number) {
+  constructor(session: LLMSessionContext, memoryRevision: number, onDispose: (() => void) | null = null) {
     this.Session = session;
     this.MemoryRevision = memoryRevision;
+    this.onDispose = onDispose;
   }
 
   public TryFindEntry(entryId: Guid): boolean {
@@ -148,7 +151,11 @@ export class ContextReadLease implements ILLMContextReadLease {
   }
 
   public dispose(): void {
-    // The bootstrap lease does not retain additional resources; it simply marks the captured root.
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.onDispose?.();
   }
 
   private entryText(entry: ContextEntry): string {

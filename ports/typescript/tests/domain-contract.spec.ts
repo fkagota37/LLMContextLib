@@ -9,6 +9,7 @@ import { ContextMutationStatus, ContextRole, SessionStatus, TextContent } from '
 import { defaultLLMContextOptions, validateLLMContextOptions } from '../src/options.js';
 import { LLMContextFactory } from '../src/factory.js';
 import { IndexStore } from '../src/storage/index-store.js';
+import { LLMContextOwner } from '../src/storage/owner.js';
 
 describe('TypeScript domain contracts', () => {
   it('preserves exact integers and UTF-16-sensitive text behavior', () => {
@@ -78,6 +79,65 @@ describe('TypeScript domain contracts', () => {
     });
     expect(appended.Status).toBe(ContextMutationStatus.Applied);
     expect(array.OpenRead('session-1').ReadRange(0, 10)).toHaveLength(1);
+  });
+
+  it('tracks live read leases and publication accounting in the owner boundary', () => {
+    const owner = new LLMContextOwner();
+    owner.initialize([{ 
+      SessionId: 'accounting-session',
+      UserId: 'user-1',
+      RepositoryId: 'repo-1',
+      Revision: 0,
+      Status: SessionStatus.Active,
+      Segments: new Map([[1, { SegmentId: 1, Revision: 0, Entries: [{
+        EntryId: 'entry-1',
+        Sequence: 1,
+        Role: ContextRole.User,
+        CreatedAt: '2026-01-01T00:00:00Z',
+        Content: new TextContent('alpha'),
+      }] }]]),
+      Anchors: new Map(),
+    }]);
+
+    const firstLease = owner.openRead('accounting-session');
+    const secondLease = owner.openRead('accounting-session');
+    expect(owner.getStatistics().RetainedReads).toBe(2);
+    expect(owner.getStatistics().EstimatedRetainedBytes).toBeGreaterThan(0);
+
+    firstLease.dispose();
+    expect(owner.getStatistics().RetainedReads).toBe(1);
+
+    const sessionMutation = owner.applySession({
+      SessionId: 'accounting-session',
+      ExpectedRevision: 0,
+      Changes: [{ kind: 'AppendEntries', Entries: [{
+        EntryId: 'entry-2',
+        Role: ContextRole.Assistant,
+        CreatedAt: '2026-01-01T00:00:00Z',
+        Content: new TextContent('beta'),
+      }] }],
+    });
+    expect(sessionMutation.Status).toBe(ContextMutationStatus.Applied);
+    expect(owner.getStatistics().PublishedMutations).toBe(1);
+
+    const memoryMutation = owner.applyMemory({
+      ExpectedRevision: 0,
+      Upserts: [{
+        MemoryId: 'memory-1',
+        Scope: { UserId: 'user-1' },
+        Content: 'gamma',
+        Revision: 0,
+        Status: 'Confirmed' as any,
+        ExpiresAt: null,
+        Sources: [],
+      }],
+      Deletes: [],
+    });
+    expect(memoryMutation.Status).toBe(ContextMutationStatus.Applied);
+    expect(owner.getStatistics().PublishedMutations).toBe(2);
+
+    secondLease.dispose();
+    expect(owner.getStatistics().RetainedReads).toBe(0);
   });
 
   it('updates memory rows with explicit revision and not-found checks', () => {

@@ -110,6 +110,19 @@ export class LLMContextOwner {
     return new ContextReadLease(this.cloneSession(current), this.memoryRevision);
   }
 
+  public openView<T>(definition: { readonly SessionId: Guid; readonly MaximumResults: number; Evaluate(context: ContextReadLease): Iterable<T> }): Iterable<T> {
+    const lease = this.openRead(definition.SessionId);
+    const values: T[] = [];
+    for (const item of definition.Evaluate(lease)) {
+      values.push(item);
+      if (values.length >= definition.MaximumResults) {
+        break;
+      }
+    }
+    lease.dispose();
+    return values;
+  }
+
   public getStatistics(): {
     readonly Sessions: number;
     readonly EstimatedActiveBytes: number;

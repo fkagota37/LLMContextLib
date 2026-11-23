@@ -115,6 +115,61 @@ describe('TypeScript domain contracts', () => {
     expect(store.getAnchorKeys('anchor-1')).toEqual(['alpha', 'beta']);
   });
 
+  it('caps view results to the requested maximum and retains the captured lease snapshot', () => {
+    const factory = LLMContextFactory.Create();
+    const array = factory.Initialize([
+      {
+        SessionId: 'view-session',
+        UserId: 'user-1',
+        RepositoryId: 'repo-1',
+        Revision: 0,
+        Status: SessionStatus.Active,
+        Segments: new Map([[1, { SegmentId: 1, Revision: 0, Entries: [{
+          EntryId: 'entry-a',
+          Sequence: 1,
+          Role: ContextRole.User,
+          CreatedAt: '2026-01-01T00:00:00Z',
+          Content: new TextContent('one'),
+        }, {
+          EntryId: 'entry-b',
+          Sequence: 2,
+          Role: ContextRole.Assistant,
+          CreatedAt: '2026-01-01T00:00:00Z',
+          Content: new TextContent('two'),
+        }] }]]),
+        Anchors: new Map(),
+      },
+    ]);
+
+    const lease = array.OpenRead('view-session');
+    const view = array.OpenView({
+      SessionId: 'view-session',
+      MaximumResults: 1,
+      Evaluate: (context) => context.ReadRange(0, 10).map((entry) => entry.EntryId),
+    });
+
+    expect([...view]).toEqual(['entry-a']);
+    expect(lease.ReadRange(0, 10).map((entry) => entry.EntryId)).toEqual(['entry-a', 'entry-b']);
+
+    const mutated = array.Apply({
+      SessionId: 'view-session',
+      ExpectedRevision: 0,
+      Changes: [{
+        kind: 'AppendEntries',
+        Entries: [{
+          EntryId: 'entry-c',
+          Role: ContextRole.Assistant,
+          CreatedAt: '2026-01-01T00:00:00Z',
+          Content: new TextContent('three'),
+        }],
+      }],
+    });
+    expect(mutated.Status).toBe(ContextMutationStatus.Applied);
+    expect(lease.ReadRange(0, 10).map((entry) => entry.EntryId)).toEqual(['entry-a', 'entry-b']);
+    expect(array.OpenRead('view-session').ReadRange(0, 10).map((entry) => entry.EntryId)).toEqual(['entry-a', 'entry-b', 'entry-c']);
+    lease.dispose();
+  });
+
   it('rejects invalid options with explicit errors', () => {
     expect(() => validateLLMContextOptions({
       ...defaultLLMContextOptions,

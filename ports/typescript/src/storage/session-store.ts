@@ -108,8 +108,15 @@ export class SessionStore {
   private applyChange(session: MutableSession, change: ContextChange, appendedEntryIds: Guid[]): void {
     switch (change.kind) {
       case 'AppendEntries': {
-        const nextSegmentId = this.nextSegmentId(session);
-        const entries = this.allEntries(session);
+        let targetSegmentId = 0;
+        let targetSegment = session.Segments.get(targetSegmentId);
+        if (!targetSegment) {
+          targetSegmentId = this.nextSegmentId(session);
+          targetSegment = { SegmentId: targetSegmentId, Revision: session.Revision + 1, Entries: [] };
+          session.Segments.set(targetSegmentId, targetSegment);
+        }
+
+        const entries = [...targetSegment.Entries];
         for (const entry of change.Entries) {
           const nextEntry: ContextEntry = {
             ...entry,
@@ -118,8 +125,9 @@ export class SessionStore {
           appendedEntryIds.push(nextEntry.EntryId);
           entries.push(nextEntry);
         }
-        session.Segments.set(nextSegmentId, {
-          SegmentId: nextSegmentId,
+
+        session.Segments.set(targetSegmentId, {
+          SegmentId: targetSegmentId,
           Revision: session.Revision + 1,
           Entries: entries,
         });

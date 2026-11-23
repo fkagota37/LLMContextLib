@@ -33,6 +33,10 @@ class SimpleContextView<T> implements ILLMContextView<T> {
     return this.values[Symbol.iterator]();
   }
 
+  public get length(): number {
+    return this.values.length;
+  }
+
   public dispose(): void {
     // The bootstrap view captures a read-only slice and releases immediately when it drops.
   }
@@ -40,10 +44,6 @@ class SimpleContextView<T> implements ILLMContextView<T> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public static create<T>(sessionId: Guid, lease: ContextReadLease, definition: ILLMContextViewDefinition<T>): SimpleContextView<T> {
     return new SimpleContextView(sessionId, lease, definition);
-  }
-
-  get length(): number {
-    return this.values.length;
   }
 }
 
@@ -141,7 +141,21 @@ export class LLMContextFactoryBuilder {
       OpenRead: (sessionId) => owner.openRead(sessionId),
       OpenView: <T>(definition: ILLMContextViewDefinition<T>): ILLMContextView<T> => {
         const lease = owner.openRead(definition.SessionId);
-        return new SimpleContextView(definition.SessionId, lease, definition);
+        const values: T[] = [];
+        for (const item of definition.Evaluate(lease)) {
+          values.push(item);
+          if (values.length >= definition.MaximumResults) {
+            break;
+          }
+        }
+        return {
+          SessionRevision: lease.Session.Revision,
+          MemoryRevision: lease.MemoryRevision,
+          length: values.length,
+          at: (index: number) => values[index],
+          [Symbol.iterator]: () => values[Symbol.iterator](),
+          dispose: () => lease.dispose(),
+        };
       },
       GetStatistics: () => owner.getStatistics(),
       dispose: () => owner.dispose(),

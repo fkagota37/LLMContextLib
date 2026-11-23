@@ -30,7 +30,9 @@ export class LLMContextOwner {
   public initialize(sessions: readonly LLMSessionContext[]): void {
     this.sessions.clear();
     for (const session of sessions) {
-      this.sessions.set(session.SessionId, this.cloneSession(session));
+      const clone = this.cloneSession(session);
+      this.sessions.set(session.SessionId, clone);
+      this.store.touch(clone);
     }
   }
 
@@ -61,21 +63,22 @@ export class LLMContextOwner {
     }
 
     this.sessions.delete(sessionId);
-    return new ContextMutationResult(ContextMutationStatus.Applied, current.Revision, null, []);
+    return this.store.removeSession(sessionId, expectedRevision);
   }
 
   public applySession(changes: ContextChangeSet): IContextMutationResult {
-    const current = this.sessions.get(changes.SessionId);
-    if (!current) {
-      return new ContextMutationResult(ContextMutationStatus.NotFound, 0, 'Session not found.', []);
-    }
-    if (current.Revision !== changes.ExpectedRevision) {
-      return new ContextMutationResult(ContextMutationStatus.RevisionConflict, current.Revision, 'Expected revision mismatch.', []);
+    const result = this.store.applySession(changes);
+    if (result.Status !== ContextMutationStatus.Applied) {
+      return result;
     }
 
-    const nextRevision = current.Revision + 1;
-    this.sessions.set(changes.SessionId, { ...current, Revision: nextRevision });
-    return new ContextMutationResult(ContextMutationStatus.Applied, nextRevision, null, []);
+    const session = this.store.tryFind(changes.SessionId);
+    if (!session) {
+      return new ContextMutationResult(ContextMutationStatus.NotFound, 0, 'Session not found after mutation.', []);
+    }
+
+    this.sessions.set(changes.SessionId, this.cloneSession(session));
+    return result;
   }
 
   public applyMemory(changes: MemoryChangeSet): IContextMutationResult {

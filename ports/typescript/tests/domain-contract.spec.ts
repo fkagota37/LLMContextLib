@@ -61,6 +61,22 @@ describe('TypeScript domain contracts', () => {
     const lease = array.OpenRead('session-1');
     expect(lease.ReadRange(0, 10)).toEqual([]);
     expect(lease.TryFindEntry('missing-entry')).toBe(false);
+
+    const appended = array.Apply({
+      SessionId: 'session-1',
+      ExpectedRevision: 0,
+      Changes: [{
+        kind: 'AppendEntries',
+        Entries: [{
+          EntryId: 'entry-1',
+          Role: ContextRole.User,
+          CreatedAt: '2026-01-01T00:00:00Z',
+          Content: new TextContent('hello from the port'),
+        }],
+      }],
+    });
+    expect(appended.Status).toBe(ContextMutationStatus.Applied);
+    expect(array.OpenRead('session-1').ReadRange(0, 10)).toHaveLength(1);
   });
 
   it('updates memory rows with explicit revision and not-found checks', () => {

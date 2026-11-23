@@ -109,8 +109,8 @@ export class LLMContextFactoryBuilder {
         const result = owner.createSession({
           ...session,
           SessionId: session.SessionId,
-          UserId: session.SessionId,
-          RepositoryId: null,
+          UserId: session.UserId ?? session.SessionId,
+          RepositoryId: session.RepositoryId ?? null,
           Revision: session.Revision,
           Status: SessionStatus.Active,
           Segments: new Map(),

@@ -81,6 +81,77 @@ describe('TypeScript domain contracts', () => {
     expect(array.OpenRead('session-1').ReadRange(0, 10)).toHaveLength(1);
   });
 
+  it('preserves session metadata on creation and applies ordered mutation changes', () => {
+    const owner = new LLMContextOwner();
+    owner.initialize([]);
+
+    const created = owner.createSession({
+      SessionId: 'mutation-session',
+      UserId: 'user-2',
+      RepositoryId: 'repo-2',
+      Revision: 0,
+      Status: SessionStatus.Active,
+      Segments: new Map(),
+      Anchors: new Map(),
+    });
+    expect(created.Status).toBe(ContextMutationStatus.Applied);
+    expect(owner.tryFindSession('mutation-session')?.UserId).toBe('user-2');
+    expect(owner.tryFindSession('mutation-session')?.RepositoryId).toBe('repo-2');
+
+    const appended = owner.applySession({
+      SessionId: 'mutation-session',
+      ExpectedRevision: 0,
+      Changes: [{
+        kind: 'AppendEntries',
+        Entries: [{
+          EntryId: 'entry-1',
+          Role: ContextRole.User,
+          CreatedAt: '2026-01-01T00:00:00Z',
+          Content: new TextContent('first'),
+        }],
+      }, {
+        kind: 'PutAnchor',
+        Anchor: {
+          AnchorId: 'anchor-1',
+          StartEntryId: 'entry-1',
+          EndEntryId: 'entry-1',
+          Title: 'first anchor',
+          Summary: 'anchor summary',
+          Topics: ['alpha'],
+          Kind: 'Manual' as any,
+          SourceRevision: 0,
+          PinnedRevision: null,
+        },
+      }, {
+        kind: 'ReplaceEntry',
+        EntryId: 'entry-1',
+        Content: new TextContent('updated'),
+        IndexKeys: ['alpha'],
+      }, {
+        kind: 'SetSessionStatus',
+        Status: SessionStatus.Suspended,
+      }],
+    });
+    expect(appended.Status).toBe(ContextMutationStatus.Applied);
+    expect(owner.tryFindSession('mutation-session')?.Status).toBe(SessionStatus.Suspended);
+    expect(owner.tryFindSession('mutation-session')?.Segments.get(1)?.Entries[0].Content).toBeInstanceOf(TextContent);
+
+    const removed = owner.applySession({
+      SessionId: 'mutation-session',
+      ExpectedRevision: 1,
+      Changes: [{
+        kind: 'DeleteEntry',
+        EntryId: 'entry-1',
+      }, {
+        kind: 'RemoveAnchor',
+        AnchorId: 'anchor-1',
+      }],
+    });
+    expect(removed.Status).toBe(ContextMutationStatus.Applied);
+    expect(owner.tryFindSession('mutation-session')?.Segments.get(1)?.Entries).toEqual([]);
+    expect(owner.tryFindSession('mutation-session')?.Anchors.has('anchor-1')).toBe(false);
+  });
+
   it('tracks live read leases and publication accounting in the owner boundary', () => {
     const owner = new LLMContextOwner();
     owner.initialize([{ 

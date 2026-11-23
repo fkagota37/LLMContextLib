@@ -14,6 +14,7 @@ import {
   ContextMutationStatus,
 } from '../domain/session.js';
 import { ContextReadLease } from './lease.js';
+import { MemoryStore } from './memory-store.js';
 import { SessionStore } from './session-store.js';
 
 /**
@@ -22,6 +23,7 @@ import { SessionStore } from './session-store.js';
  */
 export class LLMContextOwner {
   private readonly store = new SessionStore();
+  private readonly memoryStore = new MemoryStore();
   private readonly sessions = new Map<Guid, LLMSessionContext>();
   private memoryRevision = 0;
 
@@ -77,8 +79,9 @@ export class LLMContextOwner {
   }
 
   public applyMemory(changes: MemoryChangeSet): IContextMutationResult {
-    if (changes.ExpectedRevision < 0) {
-      return new ContextMutationResult(ContextMutationStatus.InvalidOperation, 0, 'Expected revision must be non-negative.', []);
+    const result = this.memoryStore.apply(changes);
+    if (result.Status !== ContextMutationStatus.Applied) {
+      return new ContextMutationResult(result.Status, result.Revision, result.Error ?? null, []);
     }
 
     this.memoryRevision = Math.max(this.memoryRevision, changes.ExpectedRevision + 1);
@@ -122,6 +125,10 @@ export class LLMContextOwner {
 
   public getStore(): SessionStore {
     return this.store;
+  }
+
+  public getMemoryStore(): MemoryStore {
+    return this.memoryStore;
   }
 
   private cloneSession(session: LLMSessionContext): LLMSessionContext {

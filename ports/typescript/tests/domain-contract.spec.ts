@@ -63,6 +63,31 @@ describe('TypeScript domain contracts', () => {
     expect(lease.TryFindEntry('missing-entry')).toBe(false);
   });
 
+  it('updates memory rows with explicit revision and not-found checks', () => {
+    const factory = LLMContextFactory.Create();
+    const root = factory.Initialize([]);
+    const memory = root.ApplyMemory({
+      ExpectedRevision: 0,
+      Upserts: [{
+        MemoryId: 'memory-1',
+        Scope: { UserId: 'user-1' },
+        Content: 'alpha',
+        Revision: 0,
+        Status: 'Confirmed' as any,
+        ExpiresAt: null,
+        Sources: [],
+      }],
+      Deletes: [],
+    });
+
+    expect(memory.Status).toBe(ContextMutationStatus.Applied);
+    expect(root.ApplyMemory({
+      ExpectedRevision: 0,
+      Upserts: [],
+      Deletes: ['memory-missing'],
+    }).Status).toBe(ContextMutationStatus.NotFound);
+  });
+
   it('rejects invalid options with explicit errors', () => {
     expect(() => validateLLMContextOptions({
       ...defaultLLMContextOptions,

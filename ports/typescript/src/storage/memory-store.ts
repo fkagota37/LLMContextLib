@@ -13,17 +13,25 @@ export class MemoryStore {
   }
 
   public apply(changes: MemoryChangeSet): { readonly Status: ContextMutationStatus; readonly Revision: number; readonly Error?: string | null } {
+    if (changes.ExpectedRevision < 0) {
+      return { Status: ContextMutationStatus.InvalidOperation, Revision: 0, Error: 'Expected revision must be non-negative.' };
+    }
+
     for (const item of changes.Deletes) {
       if (!this.memory.has(item)) {
         return { Status: ContextMutationStatus.NotFound, Revision: changes.ExpectedRevision, Error: 'Memory item not found.' };
       }
     }
+
     for (const item of changes.Upserts) {
-      this.memory.set(item.MemoryId, item);
+      const next = { ...item, Revision: Math.max(item.Revision, changes.ExpectedRevision + 1) };
+      this.memory.set(item.MemoryId, next);
     }
+
     for (const item of changes.Deletes) {
       this.memory.delete(item);
     }
+
     return { Status: ContextMutationStatus.Applied, Revision: changes.ExpectedRevision + 1 };
   }
 }

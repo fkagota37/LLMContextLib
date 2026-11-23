@@ -10,9 +10,14 @@ export class IndexStore {
   private readonly entries = new Map<Guid, readonly string[]>();
   private readonly anchors = new Map<Guid, readonly string[]>();
 
+  public clear(): void {
+    this.entries.clear();
+    this.anchors.clear();
+  }
+
   public setEntry(entryId: Guid, keys: ContextIndexKeys, mode: ContextIndexingMode): void {
     if (mode === ContextIndexingMode.ProducerOwned) {
-      this.entries.set(entryId, keys.Keys);
+      this.entries.set(entryId, [...keys.Keys]);
       return;
     }
     this.entries.set(entryId, []);
@@ -20,19 +25,36 @@ export class IndexStore {
 
   public setAnchor(anchorId: Guid, keys: ContextIndexKeys, mode: ContextIndexingMode): void {
     if (mode === ContextIndexingMode.ProducerOwned) {
-      this.anchors.set(anchorId, keys.Keys);
+      this.anchors.set(anchorId, [...keys.Keys]);
       return;
     }
     this.anchors.set(anchorId, []);
   }
 
+  public removeEntry(entryId: Guid): void {
+    this.entries.delete(entryId);
+  }
+
+  public removeAnchor(anchorId: Guid): void {
+    this.anchors.delete(anchorId);
+  }
+
   public searchKeys(keys: readonly string[]): readonly Guid[] {
     const matches: Guid[] = [];
+    const keySet = new Set(keys);
     for (const [entryId, entryKeys] of this.entries.entries()) {
-      if (entryKeys.some((value) => keys.includes(value))) {
+      if (entryKeys.some((value) => keySet.has(value))) {
         matches.push(entryId);
       }
     }
     return matches;
+  }
+
+  public getEntryKeys(entryId: Guid): readonly string[] {
+    return this.entries.get(entryId) ?? [];
+  }
+
+  public getAnchorKeys(anchorId: Guid): readonly string[] {
+    return this.anchors.get(anchorId) ?? [];
   }
 }

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 // Experimental work in progress; not production-ready. No stable release/API guarantees.
 
+import { ContextIndexingMode } from '../domain/index-keys.js';
 import {
   type ContextChangeSet,
   type ContextEntry,
@@ -14,6 +15,7 @@ import {
   ContextMutationStatus,
 } from '../domain/session.js';
 import { ContextReadLease } from './lease.js';
+import { IndexStore } from './index-store.js';
 import { MemoryStore } from './memory-store.js';
 import { SessionStore } from './session-store.js';
 
@@ -24,15 +26,18 @@ import { SessionStore } from './session-store.js';
 export class LLMContextOwner {
   private readonly store = new SessionStore();
   private readonly memoryStore = new MemoryStore();
+  private readonly indexStore = new IndexStore();
   private readonly sessions = new Map<Guid, LLMSessionContext>();
   private memoryRevision = 0;
 
   public initialize(sessions: readonly LLMSessionContext[]): void {
     this.sessions.clear();
+    this.indexStore.clear();
     for (const session of sessions) {
       const clone = this.cloneSession(session);
       this.sessions.set(session.SessionId, clone);
       this.store.touch(clone);
+      this.reindexSession(clone);
     }
   }
 
@@ -50,6 +55,7 @@ export class LLMContextOwner {
     const next = this.cloneSession(session);
     this.sessions.set(next.SessionId, next);
     this.store.touch(next);
+    this.reindexSession(next);
     return new ContextMutationResult(ContextMutationStatus.Applied, next.Revision, null, []);
   }
 
@@ -63,6 +69,10 @@ export class LLMContextOwner {
     }
 
     this.sessions.delete(sessionId);
+    this.indexStore.clear();
+    for (const session of this.sessions.values()) {
+      this.reindexSession(session);
+    }
     return this.store.removeSession(sessionId, expectedRevision);
   }
 
@@ -78,6 +88,7 @@ export class LLMContextOwner {
     }
 
     this.sessions.set(changes.SessionId, this.cloneSession(session));
+    this.reindexSession(this.sessions.get(changes.SessionId) ?? session);
     return result;
   }
 
@@ -134,6 +145,10 @@ export class LLMContextOwner {
     return this.memoryStore;
   }
 
+  public getIndexStore(): IndexStore {
+    return this.indexStore;
+  }
+
   private cloneSession(session: LLMSessionContext): LLMSessionContext {
     const segments = new Map<number, { readonly SegmentId: number; readonly Revision: number; readonly Entries: readonly ContextEntry[] }>();
     for (const [segmentId, segment] of session.Segments) {
@@ -149,5 +164,23 @@ export class LLMContextOwner {
       Segments: segments,
       Anchors: anchors,
     };
+  }
+
+  private reindexSession(session: LLMSessionContext): void {
+    for (const segment of session.Segments.values()) {
+      for (const entry of segment.Entries) {
+        const keys = entry.IndexKeys ?? [];
+        if (keys.length) {
+          this.indexStore.setEntry(entry.EntryId, { Keys: keys }, ContextIndexingMode.ProducerOwned);
+        }
+      }
+    }
+
+    for (const anchor of session.Anchors.values()) {
+      const keys = anchor.IndexKeys ?? [];
+      if (keys.length) {
+        this.indexStore.setAnchor(anchor.AnchorId, { Keys: keys }, ContextIndexingMode.ProducerOwned);
+      }
+    }
   }
 }

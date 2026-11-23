@@ -8,6 +8,7 @@ import { ContextIndexingMode, ContextIndexKeys } from '../src/domain/index-keys.
 import { ContextMutationStatus, ContextRole, SessionStatus, TextContent } from '../src/domain/session.js';
 import { defaultLLMContextOptions, validateLLMContextOptions } from '../src/options.js';
 import { LLMContextFactory } from '../src/factory.js';
+import { IndexStore } from '../src/storage/index-store.js';
 
 describe('TypeScript domain contracts', () => {
   it('preserves exact integers and UTF-16-sensitive text behavior', () => {
@@ -102,6 +103,16 @@ describe('TypeScript domain contracts', () => {
       Upserts: [],
       Deletes: ['memory-missing'],
     }).Status).toBe(ContextMutationStatus.NotFound);
+  });
+
+  it('stores producer-owned keys and resolves them through the index boundary', () => {
+    const store = new IndexStore();
+    store.setEntry('entry-1', new ContextIndexKeys(['zeta', 'alpha', 'alpha']), ContextIndexingMode.ProducerOwned);
+    store.setAnchor('anchor-1', new ContextIndexKeys(['alpha', 'beta']), ContextIndexingMode.ProducerOwned);
+
+    expect(store.searchKeys(['alpha'])).toEqual(['entry-1']);
+    expect(store.getEntryKeys('entry-1')).toEqual(['alpha', 'zeta']);
+    expect(store.getAnchorKeys('anchor-1')).toEqual(['alpha', 'beta']);
   });
 
   it('rejects invalid options with explicit errors', () => {

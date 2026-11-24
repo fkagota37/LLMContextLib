@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: MIT
 // Experimental work in progress; not production-ready. No stable release/API guarantees.
 
+import { sealPayload } from './payload-identity.js';
+
 /**
  * Producer-owned index keys are exact opaque labels, not inferred text tokens. The port keeps
  * their sorting and deduplication deterministic and leaves all application semantics to the host.
@@ -15,12 +17,14 @@ export class ContextIndexKeys {
   constructor(keys: Iterable<string>) {
     const unique = new Set<string>();
     for (const key of keys) {
-      if (key === null || key === undefined) {
-        throw new TypeError('Index keys cannot be null or undefined.');
+      if (typeof key !== 'string') {
+        throw new TypeError('Index keys must be strings.');
       }
       unique.add(key);
     }
-    this.Keys = [...unique].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    this.Keys = [...unique].sort();
+    sealPayload(this.Keys);
+    Object.freeze(this);
   }
 }
 

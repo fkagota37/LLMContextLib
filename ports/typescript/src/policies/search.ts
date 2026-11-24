@@ -4,18 +4,55 @@
 // Experimental work in progress; not production-ready. No stable release/API guarantees.
 
 import type { ContextEntry, ContextSearchHit } from '../domain/session.js';
+import { compareInt64 } from '../domain/int64.js';
 import { canonicalizeSearchText, getEntryText, truncateForSnippet } from './text.js';
 
+function normalizeQueryTerms(value: string): readonly string[] {
+  const normalized = canonicalizeSearchText(value);
+  if (!normalized) {
+    return [];
+  }
+
+  const terms = new Set<string>();
+  let token = '';
+  for (const character of normalized) {
+    if (/[A-Za-z0-9]/u.test(character)) {
+      token += character.toLowerCase();
+    } else if (token.length > 0) {
+      terms.add(token);
+      token = '';
+    }
+  }
+  if (token.length > 0) {
+    terms.add(token);
+  }
+  return [...terms].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
 export function filterExactTextMatches(entries: readonly ContextEntry[], query: string, limit: number): readonly ContextSearchHit[] {
-  const normalized = canonicalizeSearchText(query);
-  if (!normalized || limit <= 0) {
+  const terms = normalizeQueryTerms(query);
+  if (!terms.length || limit <= 0) {
     return [];
   }
 
   const matches: ContextSearchHit[] = [];
   for (const entry of entries) {
     const text = getEntryText(entry);
-    if (text.toLowerCase().includes(normalized.toLowerCase())) {
+    const textTerms = new Set<string>();
+    let token = '';
+    for (const character of text) {
+      if (/[A-Za-z0-9]/u.test(character)) {
+        token += character.toLowerCase();
+      } else if (token.length > 0) {
+        textTerms.add(token);
+        token = '';
+      }
+    }
+    if (token.length > 0) {
+      textTerms.add(token);
+    }
+
+    if (terms.every((term) => textTerms.has(term))) {
       matches.push({
         EntryId: entry.EntryId,
         AnchorId: null,
@@ -57,5 +94,5 @@ export function filterKeyMatches(entries: readonly ContextEntry[], keys: readonl
 }
 
 export function orderSearchMatches(matches: readonly ContextSearchHit[]): readonly ContextSearchHit[] {
-  return [...matches].sort((a, b) => a.Sequence - b.Sequence || a.EntryId.localeCompare(b.EntryId));
+  return [...matches].sort((a, b) => compareInt64(a.Sequence, b.Sequence) || a.EntryId.localeCompare(b.EntryId));
 }

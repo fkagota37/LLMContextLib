@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: MIT
 // Experimental work in progress; not production-ready. No stable release/API guarantees.
 
-import type { AnchorResolution as AnchorResolutionModel, ContextEntry, ContextMemory, ContextSearchHit as ContextSearchHitModel, ContextRole, ConversationAnchor, Guid } from './session.js';
+import type { AnchorResolution as AnchorResolutionModel, ContextChangeSet, ContextEntry, ContextMemory, ContextSearchHit as ContextSearchHitModel, Guid, IContextMutationResult, LLMSessionContext, MemoryChangeSet } from './session.js';
+import type { ContextIndexKeys } from './index-keys.js';
+import type { Int64 } from './int64.js';
 
 export interface ContextCursor {
   readonly SessionId: Guid;
-  readonly Revision: number;
-  readonly AfterSequence: number;
+  readonly Revision: Int64;
+  readonly AfterSequence: Int64;
 }
 
 export interface ContextPage {
@@ -17,13 +19,16 @@ export interface ContextPage {
 }
 
 export interface ILLMContextReadLease {
-  readonly Session: { readonly Revision: number };
-  readonly MemoryRevision: number;
-  TryFindEntry(entryId: Guid): boolean;
-  ReadRange(fromSequence: number, count: number): readonly ContextEntry[];
+  readonly IndexingMode: import('./index-keys.js').ContextIndexingMode;
+  readonly Session: LLMSessionContext;
+  readonly MemoryRevision: Int64;
+  readonly IndexStatus: import('./session.js').ContextIndexStatus;
+  TryFindEntry(entryId: Guid): ContextEntry | null;
+  ReadRange(fromSequence: Int64, count: number): readonly ContextEntry[];
   ReadPage(cursor: ContextCursor | null, count: number): ContextPage;
   Search(query: string, limit: number): readonly ContextSearchHitModel[];
-  SearchKeys(keys: readonly string[], limit: number): readonly ContextSearchHitModel[];
+  SearchKeys(keys: ContextIndexKeys | readonly string[], limit: number): readonly ContextSearchHitModel[];
+  SearchIndexed(query: string, limit: number): import('./session.js').ContextIndexedSearchResult;
   ResolveAnchor(anchorId: Guid): AnchorResolutionModel;
   GetApplicableMemory(scopes: readonly { readonly UserId?: Guid | null; readonly RepositoryId?: Guid | null; readonly SessionId?: Guid | null }[]): readonly ContextMemory[];
   dispose(): void;
@@ -36,32 +41,44 @@ export interface ILLMContextViewDefinition<T> {
 }
 
 export interface ILLMContextView<T> extends Iterable<T> {
-  readonly SessionRevision: number;
-  readonly MemoryRevision: number;
+  readonly SessionRevision: Int64;
+  readonly MemoryRevision: Int64;
   readonly length: number;
   at(index: number): T;
   dispose(): void;
 }
 
 export interface ILLMContextPolymorphicArray {
-  TryFind(sessionId: Guid): { readonly SessionId: Guid; readonly Revision: number } | null;
-  CreateSession(session: { readonly SessionId: Guid; readonly Revision: number }): { readonly Status: string; readonly Revision: number };
-  RemoveSession(sessionId: Guid, expectedRevision: number): { readonly Status: string; readonly Revision: number };
-  Apply(changes: { readonly SessionId: Guid; readonly ExpectedRevision: number; readonly Changes: readonly unknown[] }): { readonly Status: string; readonly Revision: number };
-  ApplyMemory(changes: { readonly ExpectedRevision: number; readonly Upserts: readonly ContextMemory[]; readonly Deletes: readonly Guid[] }): { readonly Status: string; readonly Revision: number };
+  TryFind(sessionId: Guid): LLMSessionContext | null;
+  CreateSession(session: LLMSessionContext): IContextMutationResult;
+  RemoveSession(sessionId: Guid, expectedRevision: Int64): IContextMutationResult;
+  Apply(changes: ContextChangeSet): IContextMutationResult;
+  ApplyMemory(changes: MemoryChangeSet): IContextMutationResult;
   OpenRead(sessionId: Guid): ILLMContextReadLease;
+  WithCurrent<T>(sessionId: Guid, consume: (read: ILLMContextReadLease) => T): T;
   OpenView<T>(definition: ILLMContextViewDefinition<T>): ILLMContextView<T>;
-  GetStatistics(): { readonly Sessions: number; readonly EstimatedActiveBytes: number; readonly EstimatedRetainedBytes: number; readonly RetainedReads: number; readonly MemoryRevision: number; readonly PublishedMutations: number; readonly SegmentsRewritten: number; readonly EstimatedSegmentBytesRewritten: number };
+  WaitForIndexingAsync(sessionId: Guid, expectedRevision: Int64, signal?: AbortSignal): Promise<void>;
+  SynchronizeIndexAsync(sessionId: Guid, signal?: AbortSignal): Promise<import('../storage/partitioned-index.js').ContextIndexSynchronization>;
+  GetStatistics(): LLMContextStatistics;
   dispose(): void;
 }
 
 export interface LLMContextStatistics {
   readonly Sessions: number;
-  readonly EstimatedActiveBytes: number;
-  readonly EstimatedRetainedBytes: number;
+  readonly EstimatedActiveBytes: Int64;
+  readonly EstimatedRetainedBytes: Int64;
   readonly RetainedReads: number;
-  readonly MemoryRevision: number;
-  readonly PublishedMutations: number;
-  readonly SegmentsRewritten: number;
-  readonly EstimatedSegmentBytesRewritten: number;
+  readonly MemoryRevision: Int64;
+  readonly PublishedMutations: Int64;
+  readonly SegmentsRewritten: Int64;
+  readonly EstimatedSegmentBytesRewritten: Int64;
+  readonly EstimatedViewBytes: Int64;
+  readonly PendingIndexWork: number;
+  readonly EstimatedIndexWorkBytes: Int64;
+  readonly CompletedIndexJobs: Int64;
+  readonly DiscardedIndexJobs: Int64;
+  readonly EstimatedSynchronizationReserveBytes: Int64;
+  readonly EstimatedPreparationBytes: Int64;
+  readonly PendingSynchronizations: number;
+  readonly Execution: import('../execution/strategy.js').ContextExecutionStatistics | null;
 }

@@ -21,7 +21,10 @@ export function getEntryText(entry: ContextEntry): string {
   return '';
 }
 
-export function canonicalizeSearchText(value: string): string {
+export function canonicalizeSearchText(value: string | null | undefined): string {
+  if (typeof value !== 'string') {
+    return '';
+  }
   return value.trim();
 }
 
@@ -35,13 +38,19 @@ export function lexCompareText(a: string, b: string): number {
   return 0;
 }
 
-export function estimateTextBytes(value: string): number {
+export function estimateTextBytes(value: string | null | undefined): number {
+  if (typeof value !== 'string') {
+    return 0;
+  }
   return new TextEncoder().encode(value).length;
 }
 
-export function truncateForSnippet(value: string, maxLength = 120): string {
+export function truncateForSnippet(value: string | null | undefined, maxLength = 120): string {
+  if (typeof value !== 'string' || maxLength <= 0) {
+    return '';
+  }
   if (value.length <= maxLength) {
     return value;
   }
-  return `${value.slice(0, maxLength - 1).trimEnd()}…`;
+  return `${value.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }

@@ -3,15 +3,23 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Bootstrap project for the TypeScript port of LLMContextLib.",
+  "description": "Experimental TypeScript port of LLMContextLib.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./adapter-support": "./src/adapter-support.ts"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
+    "build:packages": "tsc -p tsconfig.packages.json && node scripts\\pack.mjs",
+    "test:packages": "node tests\\reference\\verify-packages.mjs",
     "test": "vitest run",
     "check": "npm run build && npm run test",
+    "example:build-investigation": "tsx examples\\BuildInvestigation\\program.ts",
     "format": "prettier --check .",
     "lint": "eslint . --ext .ts"
   },
   "devDependencies": {
+    "@typescript-eslint/parser": "^8.46.0",
     "@types/node": "^22.10.2",
     "eslint": "^9.17.0",
     "prettier": "^3.4.0",

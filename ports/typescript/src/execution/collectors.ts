@@ -21,8 +21,18 @@ export class ListCollector<T> implements ICollector<T> {
   }
 }
 
+export function requireNativeCollectorAccess(enabled: boolean): void {
+  if (!enabled) {
+    throw new Error('Native term collection requires explicit opt-in through the execution boundary.');
+  }
+}
+
 export class NativeTermCollector implements ICollector<string> {
   public readonly entries: string[] = [];
+
+  constructor(enabled = true) {
+    requireNativeCollectorAccess(enabled);
+  }
 
   public add(item: string): void {
     if (item && !this.entries.includes(item)) {

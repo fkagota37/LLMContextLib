@@ -45,7 +45,7 @@ Start with the [port README](README.md), [walkthrough](walkthrough.md), and
 - Reference verified with SDK 9.0.320: Release build, both test frameworks (207 tests each), whitespace check, smoke with 128 entries, and all 12 bounded ramp cases. Evidence: `TestResults\port-reference-smoke-fd94e27b80ec40a19d144bd1a9137018.json` and `TestResults\port-reference-ramp-fd94e27b80ec40a19d144bd1a9137018\suite.json` in the reference checkout.
 - Independent source oracle remains the read-only C# implementation in `D:\source\LLMContextLib`
 - Current oracle builds resolve SDK 9.0.321 under the existing SDK policy. The 9.0.320 reference-build evidence above is historical; source and dependency pins are unchanged.
-- Current Node 22 validation passes type checking, ESLint and 112 Vitest tests. Pinned supported-contract, configuration, lifecycle and view traces match 90, 79, 13 and 46 observations respectively. Both framework API inventories agree on 611 rows; generated CLR surface differences are explicitly classified, not counted as behavioral failures or a parity percentage.
+- Current Node 22 validation passes type checking, ESLint and 115 Vitest tests, including the PR #1 exported-search policy regressions. Pinned supported-contract, configuration, lifecycle and view traces match 90, 79, 13 and 46 observations respectively. Both framework API inventories agree on 611 rows; generated CLR surface differences are explicitly classified, not counted as behavioral failures or a parity percentage. The implementation ledger separates the original sealed qualification from the later policy corrections.
 
 ## Bootstrap gate status
 - Gate result: PASS for toolchain/bootstrap readiness

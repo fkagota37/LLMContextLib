@@ -3,22 +3,11 @@
 // SPDX-License-Identifier: MIT
 // Experimental work in progress; not production-ready. No stable release/API guarantees.
 
-import { SummaryContent, TextContent, ToolCallContent, ToolResultContent, type ContextEntry } from '../domain/session.js';
+import type { ContextEntry } from '../domain/session.js';
+import { Text } from './context.js';
 
 export function getEntryText(entry: ContextEntry): string {
-  if (entry.Content instanceof TextContent) {
-    return entry.Content.text;
-  }
-  if (entry.Content instanceof ToolCallContent) {
-    return `${entry.Content.toolName} ${entry.Content.argumentsJson}`;
-  }
-  if (entry.Content instanceof ToolResultContent) {
-    return entry.Content.resultJson;
-  }
-  if (entry.Content instanceof SummaryContent) {
-    return entry.Content.text;
-  }
-  return '';
+  return Text(entry.Content);
 }
 
 export function canonicalizeSearchText(value: string | null | undefined): string {

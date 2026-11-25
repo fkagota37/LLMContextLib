@@ -5,14 +5,14 @@
 
 import { testGuid } from './test-guid.js';
 import { describe, expect, it } from 'vitest';
-import { ContextRole, SummaryContent, TextContent, ToolCallContent, ToolResultContent, type ContextEntry, type ContextMemory } from '../src/domain/session.js';
+import { ContextRole, SessionStatus, SummaryContent, TextContent, ToolCallContent, ToolResultContent, type ContextEntry, type ContextMemory } from '../src/domain/session.js';
 import { BuildModelContext, Terms, ValidateScope } from '../src/policies/context.js';
 import { LLMContextFactory } from '../src/factory.js';
 import { defaultDeferredIndexingOptions, defaultLLMContextOptions } from '../src/options.js';
 import { defaultPartitionedContextIndexOptions } from '../src/storage/partitioned-index.js';
 import { estimateActiveByteRange, estimateProjectionBytes } from '../src/policies/estimation.js';
-import { filterExactTextMatches, orderSearchMatches } from '../src/policies/search.js';
-import { canonicalizeSearchText, lexCompareText, truncateForSnippet } from '../src/policies/text.js';
+import { filterExactTextMatches, filterKeyMatches, orderSearchMatches } from '../src/policies/search.js';
+import { canonicalizeSearchText, getEntryText, lexCompareText, truncateForSnippet } from '../src/policies/text.js';
 
 const entries: readonly ContextEntry[] = [
   {
@@ -87,6 +87,84 @@ describe('Runtime policy contracts', () => {
     const multiTermMatches = filterExactTextMatches(entries, 'feature discussion', 10);
     expect(multiTermMatches).toHaveLength(1);
     expect(multiTermMatches[0]?.EntryId).toBe(testGuid('entry-2'));
+  });
+
+  it('matches read-lease Unicode search without ASCII-prefix false positives', () => {
+    const source: readonly ContextEntry[] = ['\u4f60\u597d', 'caf\u00e9', 'caf', '\u0130'].map((text, Sequence) => ({
+      EntryId: testGuid(`unicode-${Sequence}`), Sequence, Role: ContextRole.User,
+      CreatedAt: '2026-01-01T00:00:00Z', Content: new TextContent(text),
+    }));
+    const SessionId = testGuid('unicode-session');
+    const owner = LLMContextFactory.Create().Initialize([{
+      SessionId, UserId: testGuid('user'), RepositoryId: null, Revision: 0, Status: SessionStatus.Active,
+      Segments: new Map([[0, { SegmentId: 0, Revision: 0, Entries: source }]]), Anchors: new Map(),
+    }]);
+    try {
+      owner.WithCurrent(SessionId, (read) => {
+        for (const [query, index] of [['\u4f60\u597d', 0], ['CAF\u00c9', 1], ['caf', 2], ['\u0130', 3]] as const) {
+          const expected = [source[index].EntryId];
+          expect(read.Search(query, 10).map((hit) => hit.EntryId)).toEqual(expected);
+          expect(filterExactTextMatches(source, query, 10).map((hit) => hit.EntryId)).toEqual(expected);
+        }
+        expect(filterExactTextMatches(source, '!!!', 10)).toEqual([]);
+      });
+    } finally {
+      owner.dispose();
+    }
+  });
+
+  it('requires all opaque query keys on the same entry like read-lease SearchKeys', () => {
+    const source: readonly ContextEntry[] = [['alpha'], ['alpha', 'beta'], ['beta'], []].map((IndexKeys, Sequence) => ({
+      EntryId: testGuid(`keys-${Sequence}`), Sequence, Role: ContextRole.User,
+      CreatedAt: '2026-01-01T00:00:00Z', Content: new TextContent('opaque keys'), IndexKeys,
+    }));
+    const SessionId = testGuid('keys-session');
+    const owner = LLMContextFactory.Create().WithProducerOwnedIndexing().Initialize([{
+      SessionId, UserId: testGuid('user'), RepositoryId: null, Revision: 0, Status: SessionStatus.Active,
+      Segments: new Map([[0, { SegmentId: 0, Revision: 0, Entries: source }]]), Anchors: new Map(),
+    }]);
+    try {
+      owner.WithCurrent(SessionId, (read) => {
+        for (const keys of [['alpha', 'beta'], ['alpha', 'alpha', 'beta']]) {
+          const expected = [source[1].EntryId];
+          expect(read.SearchKeys(keys, 10).map((hit) => hit.EntryId)).toEqual(expected);
+          expect(filterKeyMatches(source, keys, 10).map((hit) => hit.EntryId)).toEqual(expected);
+        }
+        for (const keys of [[], ['ALPHA'], ['missing']]) {
+          expect(filterKeyMatches(source, keys, 10)).toEqual([]);
+          expect(read.SearchKeys(keys, 10)).toEqual([]);
+        }
+      });
+    } finally {
+      owner.dispose();
+    }
+  });
+
+  it('retains tool correlation IDs in text and exact-search policy results', () => {
+    const contents = [
+      new ToolCallContent('call-42', 'lookup', '{"query":"alpha"}'),
+      new ToolResultContent('call-42', '{"result":"ok"}', false),
+    ];
+    const source: readonly ContextEntry[] = contents.map((Content, Sequence) => ({
+      EntryId: testGuid(`tool-${Sequence}`), Sequence,
+      Role: Sequence === 0 ? ContextRole.Assistant : ContextRole.Tool,
+      CreatedAt: '2026-01-01T00:00:00Z', Content,
+    }));
+    const SessionId = testGuid('tool-session');
+    const owner = LLMContextFactory.Create().Initialize([{
+      SessionId, UserId: testGuid('user'), RepositoryId: null, Revision: 0, Status: SessionStatus.Active,
+      Segments: new Map([[0, { SegmentId: 0, Revision: 0, Entries: source }]]), Anchors: new Map(),
+    }]);
+    try {
+      expect(source.map(getEntryText)).toEqual([
+        'lookup call-42 {"query":"alpha"}', 'call-42 {"result":"ok"}',
+      ]);
+      const expected = source.map((entry) => entry.EntryId);
+      expect(owner.WithCurrent(SessionId, (read) => read.Search('call-42', 10).map((hit) => hit.EntryId))).toEqual(expected);
+      expect(filterExactTextMatches(source, 'call-42', 10).map((hit) => hit.EntryId)).toEqual(expected);
+    } finally {
+      owner.dispose();
+    }
   });
 
   it('keeps projection estimation conservative and integer-safe for bounded runtime accounting', () => {

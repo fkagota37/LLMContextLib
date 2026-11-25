@@ -19,7 +19,7 @@ The port must remain synchronized with the C# surface area below. The categories
 | Core models, factory, options | `domain/session.ts`, `domain/int64.ts`, `options.ts`, `factory.ts`; `supported-contracts.spec.ts` and `configuration-contracts.spec.ts` pin construction/copy, callback identity, reusable builders, strict recipe replacement, nested limits and operational errors; timestamp, record, option and arithmetic traces below | Finite supported-scenario evidence, not exhaustive enumeration or CLR runtime emulation |
 | Owner publication, session and memory mutations | `storage/owner.ts`, `session-store.ts`, `memory-store.ts`; rollback, tombstone, provenance and ordered collector attribution; replacement-only and mixed pinned differentials, mailbox admission, independent worker writers and resource recovery | Overlapping speculative preparation and owner publication are distinct; no CPU-parallel service or CLR allocation/lock equivalence claim |
 | Explicit reads, `WithCurrent`, and views | Local and worker captures, lazy scopes, 46 pinned built-in view observations; exact owner-local materialized-item estimator identity, rejection/recovery, disposed-handle error precedence and retained views after publication/removal/disposal | Worker-local estimation is an opt-in TypeScript extension, not a .NET transfer contract |
-| Exact text/key search and producer-owned indexing | `policies/lexical.ts`, `storage/session-index.ts`; UTF-16 classification, exact/indexed pending search, captured-posting tests, mutation/partition/view and finite semantic-oracle differentials | Producer keys remain opaque; no inferred NLP semantics |
+| Exact text/key search and producer-owned indexing | `policies/lexical.ts`, `storage/session-index.ts`; UTF-16 classification, exact/indexed pending search, captured-posting tests, mutation/partition/view and finite semantic-oracle differentials; PR #1 regressions also align exported policy helpers with canonical text/terms and per-entry key intersection | Producer keys remain opaque; no inferred NLP semantics |
 | Deferred lifecycle | Native and both maintained Lucene variants complete off-thread; paired lifecycle trace covers pending wait disposal, quiescence before memo teardown, retained exact fallback and completed captures | Arbitrary internal custom collectors and noncooperative worker termination are extension diagnostics, not supported .NET public-provider parity |
 | Partitioned synchronization | Off-thread rebuilding and owner publication; seven paired snapshots plus cancellation/shared-wait, failure-before-compaction, strict write fencing, reopening and recovery traces | Between-partition failure injection is TypeScript-only; it is not paired source evidence |
 | Execution and adapters | Maintained providers install separately with a core peer dependency; 12 installed concurrent-caller combinations, memo attribution/retained-key checks, native/Lucene shutdown, 320 LRU traces and 72 foreground-LFU diagnostic traces | Composed collectors/memos remain owner-serialized. LFU is a diagnostic only; pinned dependency's scalar matrix crashes and is not qualified |
@@ -297,17 +297,17 @@ is not itself behavioral certification. Worker projection authorization, arbitra
 custom-worker termination, and between-partition failure injection remain separately
 labelled TypeScript extensions, not unresolved supported .NET contracts.
 
-Fresh raw outputs are under
+Historical sealed qualification outputs for implementation commit `b2d3dfa` are under
 `C:\Users\felixlu\.copilot\session-state\6e18b0f3-c27c-40ca-bbaf-4dadffbc7720\files`.
 These locally retained outputs/manifests are not committed repository artifacts
 or npm package contents. Public consumers can rerun the committed exporters,
 fixtures, tests, and verifiers rather than depend on access to that local path.
 The `sealed-*` runs supersede the earlier `final-*`, `mailbox-reply-*`, and historical
-pressure runs for current-source qualification. The complete source fingerprint is
+pressure runs for that implementation's qualification. The complete source fingerprint is
 `6bd042a33936ffa0fa7137b9a01ce1fdfb1fa05d403425d1bd8ddd63e904641f`.
 The replay/finite-retention tools use their older core/benchmark hash domain,
 `2df6684a736d7d55f7d7d60b1f6f835e14878bd88145db391047149572f1820a`;
-both are recomputed from the same current checkout, not interpreted as equal hash
+both were recomputed from the same qualified pre-commit checkout, not interpreted as equal hash
 algorithms. The complete domain additionally includes adapters and package-build
 configuration. The final evidence manifest records file hashes, built package and
 reference assembly hashes, runtime/SDK, commands and staged/unstaged identities.
@@ -343,3 +343,35 @@ claim. The qualified implementation/tests were committed as
 the pre-commit staged identity; that historical record is not the current Git
 status. Governance documentation is included in the subsequent documentation
 publication; raw local evidence remains outside Git.
+
+## PR #1 exported-search policy corrections
+
+The three review findings were reproduced before correction: exported exact text
+search used ASCII-only query/entry loops, multi-key search matched any key instead
+of all keys at the same entry, and tool text omitted correlation IDs. The helpers
+now delegate to canonical `Terms`/`Text` and require every requested opaque key.
+No owner publication, index mode, preset budget, or pinned reference source changed.
+
+Three focused regressions in `search-policy.spec.ts` compare helper results with
+read-lease search for Chinese/accented/dotted-I terms, exact multi-key intersection
+including repeated/empty/case-sensitive keys, and tool call/result correlation IDs.
+The clean installed-package check also exercises the exported compiled helpers.
+
+Node 22 type checking and ESLint pass. Serial validation passes 115 tests across
+20 files and the clean core/adapter package suite. The first concurrent validation
+run timed out in the unchanged 15-second lifecycle test while the reference build
+was running; the successful serial rerun did not alter timeouts or resource limits.
+Fresh pinned comparisons match 15 mutation/accounting and seven unchanged
+WriteOptimized snapshots. Separate net8.0/net9.0 inventories still agree on
+611 rows: 304 declaration mappings, 268 explicit record operations, and 39
+classified generated-surface rows. These counts are not a parity percentage.
+
+The current implementation source fingerprint is
+`47fdeef575683c4ec8e4ad1cc05e43ddd0f1efa86325801dc4ce207cf1b0a8e4`.
+The `pr1-search-*` local artifacts record this follow-up's fixtures, inventories,
+serial test report, and staged identity. Earlier sealed replay/ramp/diagnostic
+outputs retain their original implementation attribution; they were not rerun or
+relabelled as evidence for this changed source. The four implementation/test files
+were validated and staged separately from these ledger/profile updates; together
+they form the review-fix change set. The source/run manifest retains the pre-commit
+staged identity. Generated evidence remains outside Git.

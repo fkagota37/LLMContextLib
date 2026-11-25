@@ -51,6 +51,19 @@ try {
     const replacements = core.ContextEntryRecords.ReplaceEntry;
     assert(replacements.equals(replacement, replacements.clone(replacement)));
     assert(!replacements.equals(replacement, { ...replacement, IndexKeys: ['opaque'] }));
+    const policyEntry = {
+      EntryId: cursor.SessionId, Sequence: 0, Role: ContextRole.Assistant,
+      CreatedAt: '2026-01-01T00:00:00Z',
+      Content: new core.ToolCallContent('correlation42', '\u4f60\u597d', '{}'), IndexKeys: ['alpha'],
+    };
+    assert.equal(core.filterExactTextMatches([policyEntry], '\u4f60\u597d', 1).length, 1);
+    assert.equal(core.filterExactTextMatches([policyEntry], 'correlation42', 1).length, 1);
+    assert.equal(core.getEntryText(policyEntry), '\u4f60\u597d correlation42 {}');
+    assert.equal(core.filterKeyMatches([policyEntry], ['alpha', 'beta'], 1).length, 0);
+    const resultEntry = { ...policyEntry, Content: new core.ToolResultContent('correlation42', 'caf\u00e9', false) };
+    assert.equal(core.getEntryText(resultEntry), 'correlation42 caf\u00e9');
+    assert.equal(core.filterExactTextMatches([resultEntry], 'caf\u00e9', 1).length, 1);
+    assert.equal(core.filterExactTextMatches([resultEntry], 'caf', 1).length, 0);
     const owner = LLMContextFactory.Create().Initialize([]);
     assert.equal(owner.GetStatistics().Sessions, 0);
     owner.dispose();

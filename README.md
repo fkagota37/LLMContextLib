@@ -10,7 +10,7 @@
 **Turn a conversation into a shared, navigable workspace for people and agents,
 not just a growing prompt.**
 
-LLMContextLib is a .NET library for applications that need to revisit decisions,
+LLMContextLib is a .NET library with a TypeScript/Node.js port for applications that need to revisit decisions,
 connect tool results to their reasoning, and reuse knowledge across related
 conversations. Store a session once; expose conversation, navigation, search,
 memory, and model-input views without maintaining separate transcripts.
@@ -34,7 +34,27 @@ The application still runs tools, calls models, renders its UI, and schedules
 workers. **LLMContextLib is its shared context layer**, not a model runtime,
 autonomous-agent framework, or build runner.
 
+Token budgets are **caller-owned context properties**. The library honors a
+supplied budget when assembling model input; it does not allocate budgets,
+choose model limits, or provide a model tokenizer.
+
+## Choose an implementation
+
+| Implementation               | Start here                                                                                         | Status                                                                                             |
+| ---------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| .NET 8 / .NET 9              | [Startup below](#recommended-startup), [technical usage](docs/usage-documentation.md)              | Experimental; original implementation                                                              |
+| TypeScript / Node.js 22, ESM | [Port README](ports/typescript/README.md), [runnable walkthrough](ports/typescript/walkthrough.md) | Experimental; supported-contract parity qualified against the pinned .NET reference on Windows x64 |
+
+The TypeScript port includes its own source, tests, examples, benchmark tools,
+and separately installable Lucene/BitFaster adapter equivalents under
+`ports\typescript`. It is not a separate context engine or a publicly published,
+stable npm release. See its [parity statement](ports/typescript/parity.md) for
+the reference pin, evidence, runtime-specific differences, and qualification limits.
+
 ## Recommended startup
+
+The following example uses .NET. For Node.js, use the
+[TypeScript walkthrough](ports/typescript/walkthrough.md).
 
 Start with the **`WriteOptimized` preset**, our latest tested producer-owned,
 partitioned configuration. Here, "producer" just means your calling application.
@@ -91,6 +111,9 @@ generated text tokens. Share this one owner with your workers.
 below when you need integration details or have measurements that call for tuning.
 
 ## Next steps
+
+For TypeScript, use the [port documentation](ports/typescript/README.md).
+The following guides describe the .NET implementation:
 
 - [Technical usage](docs/usage-documentation.md): ownership, loading sessions,
   reads/writes, application integration, and build/run instructions.

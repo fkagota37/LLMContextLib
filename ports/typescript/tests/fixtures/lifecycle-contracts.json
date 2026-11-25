@@ -1,0 +1,202 @@
+{
+  "reference": "479d2612315cbd292da917bae6d8d3fec35fea24",
+  "rows": [
+    {
+      "label": "synchronization/False",
+      "applied": "Applied",
+      "cancelled": "Cancelled",
+      "blocked": "Synchronizing",
+      "Generation": 1,
+      "ContentRevision": 1,
+      "PartitionsCompacted": 1,
+      "Succeeded": true,
+      "hasError": false,
+      "oldGeneration": 0,
+      "oldHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "pending": 0,
+      "preparation": "0"
+    },
+    {
+      "label": "synchronization/recovery/False",
+      "status": "Applied",
+      "Generation": 1,
+      "ContentRevision": 2,
+      "PartitionsCompacted": 0,
+      "Succeeded": true,
+      "revision": 2,
+      "indexGeneration": 1,
+      "hits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "pending": 0
+    },
+    {
+      "label": "synchronization/True",
+      "applied": "Applied",
+      "cancelled": "Cancelled",
+      "blocked": "Synchronizing",
+      "Generation": 1,
+      "ContentRevision": 1,
+      "PartitionsCompacted": 0,
+      "Succeeded": false,
+      "hasError": true,
+      "oldGeneration": 0,
+      "oldHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "pending": 0,
+      "preparation": "0"
+    },
+    {
+      "label": "synchronization/recovery/True",
+      "status": "Applied",
+      "Generation": 2,
+      "ContentRevision": 2,
+      "PartitionsCompacted": 1,
+      "Succeeded": true,
+      "revision": 2,
+      "indexGeneration": 1,
+      "hits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "pending": 0
+    },
+    {
+      "label": "shutdown/Native/False",
+      "status": "Applied",
+      "oldRevision": 0,
+      "currentRevision": 1,
+      "oldHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "currentHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "PendingIndexWork": 0,
+      "work": "0",
+      "collector": "Native",
+      "termMemo": "None",
+      "memoEntries": 0
+    },
+    {
+      "label": "shutdown/Native/True",
+      "status": "Applied",
+      "oldRevision": 0,
+      "currentRevision": 1,
+      "oldHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "currentHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "PendingIndexWork": 0,
+      "work": "0",
+      "collector": "Native",
+      "termMemo": "BitFasterConcurrentLru",
+      "memoEntries": 2
+    },
+    {
+      "label": "shutdown/LuceneRangeBuffer/False",
+      "status": "Applied",
+      "oldRevision": 0,
+      "currentRevision": 1,
+      "oldHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "currentHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "PendingIndexWork": 0,
+      "work": "0",
+      "collector": "LuceneRangeBuffer",
+      "termMemo": "None",
+      "memoEntries": 0
+    },
+    {
+      "label": "shutdown/LuceneRangeBuffer/True",
+      "status": "Applied",
+      "oldRevision": 0,
+      "currentRevision": 1,
+      "oldHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "currentHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "PendingIndexWork": 0,
+      "work": "0",
+      "collector": "LuceneRangeBuffer",
+      "termMemo": "BitFasterConcurrentLru",
+      "memoEntries": 2
+    },
+    {
+      "label": "shutdown/LuceneCharTerm/False",
+      "status": "Applied",
+      "oldRevision": 0,
+      "currentRevision": 1,
+      "oldHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "currentHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "PendingIndexWork": 0,
+      "work": "0",
+      "collector": "LuceneCharTerm",
+      "termMemo": "None",
+      "memoEntries": 0
+    },
+    {
+      "label": "shutdown/LuceneCharTerm/True",
+      "status": "Applied",
+      "oldRevision": 0,
+      "currentRevision": 1,
+      "oldHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "currentHits": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "PendingIndexWork": 0,
+      "work": "0",
+      "collector": "LuceneCharTerm",
+      "termMemo": "BitFasterConcurrentLru",
+      "memoEntries": 2
+    },
+    {
+      "label": "shutdown/pending/Native",
+      "outcome": "Disposed",
+      "stoppedBeforeReturn": true,
+      "revision": 0,
+      "complete": false,
+      "exact": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "indexed": []
+    },
+    {
+      "label": "shutdown/pending/LuceneRangeBuffer",
+      "outcome": "Disposed",
+      "stoppedBeforeReturn": true,
+      "revision": 0,
+      "complete": false,
+      "exact": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "indexed": []
+    },
+    {
+      "label": "shutdown/pending/LuceneCharTerm",
+      "outcome": "Disposed",
+      "stoppedBeforeReturn": true,
+      "revision": 0,
+      "complete": false,
+      "exact": [
+        "00000000-0000-0000-0000-000000000003"
+      ],
+      "indexed": []
+    }
+  ]
+}

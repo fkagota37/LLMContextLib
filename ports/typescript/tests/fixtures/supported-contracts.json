@@ -1,0 +1,434 @@
+{
+  "reference": "479d2612315cbd292da917bae6d8d3fec35fea24",
+  "rows": [
+    {
+      "label": "options/MaximumEntriesPerSegment/-1",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/MaximumEntriesPerSegment/0",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/MaximumEntriesPerSegment/1",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/MaximumEntriesPerSegment/2147483647",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/MaximumEstimatedBytesPerSegment/-1",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/MaximumEstimatedBytesPerSegment/0",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/MaximumEstimatedBytesPerSegment/1",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/MaximumEstimatedBytesPerSegment/2147483647",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/EstimatedResidentByteBudget/-1",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/EstimatedResidentByteBudget/0",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/EstimatedResidentByteBudget/1",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/EstimatedResidentByteBudget/2147483647",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/MaximumEstimatedRetainedBytes/-1",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/MaximumEstimatedRetainedBytes/0",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/MaximumEstimatedRetainedBytes/1",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/MaximumEstimatedRetainedBytes/2147483647",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/MaximumRetainedReads/-1",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/MaximumRetainedReads/0",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/MaximumRetainedReads/1",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/MaximumRetainedReads/2147483647",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/MaximumViewResults/-1",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/MaximumViewResults/0",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/MaximumViewResults/1",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/MaximumViewResults/2147483647",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/timeout/-1",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/timeout/0",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/timeout/0.0001",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/timeout/2147483647",
+      "outcome": "ok"
+    },
+    {
+      "label": "options/timeout/2147483648",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/null/TimeProvider",
+      "outcome": "Argument"
+    },
+    {
+      "label": "options/null/EntrySizeEstimator",
+      "outcome": "Argument"
+    },
+    {
+      "label": "options/null/ProjectionSizeEstimator",
+      "outcome": "Argument"
+    },
+    {
+      "label": "options/unknown-mode",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/producer-deferred",
+      "outcome": "Argument"
+    },
+    {
+      "label": "options/text-partitions",
+      "outcome": "Argument"
+    },
+    {
+      "label": "options/partition-headroom",
+      "outcome": "Range"
+    },
+    {
+      "label": "options/copy",
+      "originalReads": 128,
+      "copiedReads": 1,
+      "sameCallback": true,
+      "sameClock": true,
+      "defaultsUnchanged": true
+    },
+    {
+      "label": "options/reusable-builder",
+      "first": 1,
+      "second": 1
+    },
+    {
+      "label": "projection/live/37",
+      "identity": true,
+      "bytes": "37",
+      "reads": 1
+    },
+    {
+      "label": "projection/37",
+      "outcome": "ok"
+    },
+    {
+      "label": "projection/recovered/37",
+      "reads": 0,
+      "retained": "0",
+      "view": "0",
+      "revision": 0
+    },
+    {
+      "label": "projection/0",
+      "outcome": "Argument"
+    },
+    {
+      "label": "projection/recovered/0",
+      "reads": 0,
+      "retained": "0",
+      "view": "0",
+      "revision": 0
+    },
+    {
+      "label": "projection/-1",
+      "outcome": "Argument"
+    },
+    {
+      "label": "projection/recovered/-1",
+      "reads": 0,
+      "retained": "0",
+      "view": "0",
+      "revision": 0
+    },
+    {
+      "label": "projection/-2",
+      "outcome": "Callback"
+    },
+    {
+      "label": "projection/recovered/-2",
+      "reads": 0,
+      "retained": "0",
+      "view": "0",
+      "revision": 0
+    },
+    {
+      "label": "projection/9223372036854775807",
+      "outcome": "Overflow"
+    },
+    {
+      "label": "projection/recovered/9223372036854775807",
+      "reads": 0,
+      "retained": "0",
+      "view": "0",
+      "revision": 0
+    },
+    {
+      "label": "projection/evaluation-failure",
+      "outcome": "Callback"
+    },
+    {
+      "label": "projection/zero-limit",
+      "outcome": "ok"
+    },
+    {
+      "label": "projection/invalid-limit",
+      "outcome": "Range"
+    },
+    {
+      "label": "projection/callback-count",
+      "estimatorCalls": 5
+    },
+    {
+      "label": "projection/final-recovery",
+      "reads": 0,
+      "retained": "0",
+      "view": "0",
+      "revision": 0
+    },
+    {
+      "label": "read/admission-rejected",
+      "outcome": "InvalidOperation"
+    },
+    {
+      "label": "read/range-negative",
+      "outcome": "Range"
+    },
+    {
+      "label": "read/count-negative",
+      "outcome": "Range"
+    },
+    {
+      "label": "read/range-zero",
+      "outcome": "ok"
+    },
+    {
+      "label": "read/range-max",
+      "outcome": "ok"
+    },
+    {
+      "label": "read/page-zero",
+      "outcome": "Range"
+    },
+    {
+      "label": "read/page-wrong-session",
+      "outcome": "Argument"
+    },
+    {
+      "label": "read/page-wrong-revision",
+      "outcome": "Argument"
+    },
+    {
+      "label": "read/page-negative-cursor",
+      "outcome": "Argument"
+    },
+    {
+      "label": "read/page-max-cursor",
+      "outcome": "Overflow"
+    },
+    {
+      "label": "read/search-negative",
+      "outcome": "Range"
+    },
+    {
+      "label": "read/search-null",
+      "outcome": "Argument"
+    },
+    {
+      "label": "read/search-empty",
+      "outcome": "ok"
+    },
+    {
+      "label": "read/keys-null",
+      "outcome": "Argument"
+    },
+    {
+      "label": "read/anchor-missing",
+      "outcome": "NotFound"
+    },
+    {
+      "label": "read/recovered",
+      "reads": 0,
+      "retained": "0",
+      "view": "0",
+      "revision": 0
+    },
+    {
+      "label": "read/missing",
+      "outcome": "NotFound"
+    },
+    {
+      "label": "initialize/duplicates",
+      "outcome": "Argument"
+    },
+    {
+      "label": "initialize/selector",
+      "outcome": "Argument"
+    },
+    {
+      "label": "initialize/enumerator-failure",
+      "outcome": "Callback"
+    },
+    {
+      "label": "wait/missing",
+      "outcome": "NotFound"
+    },
+    {
+      "label": "wait/revision",
+      "outcome": "InvalidOperation"
+    },
+    {
+      "label": "wait/complete",
+      "outcome": "ok"
+    },
+    {
+      "label": "synchronize/not-supported",
+      "outcome": "NotSupported"
+    },
+    {
+      "label": "wait/cancelled",
+      "outcome": "Cancelled"
+    },
+    {
+      "label": "synchronize/cancelled",
+      "outcome": "Cancelled"
+    },
+    {
+      "label": "scope/0",
+      "status": "Applied",
+      "policy": [
+        "00000000-0000-0000-0000-000000000010"
+      ],
+      "storage": [
+        "00000000-0000-0000-0000-000000000010"
+      ]
+    },
+    {
+      "label": "scope/1",
+      "status": "Applied",
+      "policy": [
+        "00000000-0000-0000-0000-000000000011"
+      ],
+      "storage": [
+        "00000000-0000-0000-0000-000000000011"
+      ]
+    },
+    {
+      "label": "scope/2",
+      "status": "Applied",
+      "policy": [
+        "00000000-0000-0000-0000-000000000012"
+      ],
+      "storage": [
+        "00000000-0000-0000-0000-000000000012"
+      ]
+    },
+    {
+      "label": "scope/retained",
+      "revision": 1,
+      "memory": [
+        "00000000-0000-0000-0000-000000000010"
+      ]
+    },
+    {
+      "label": "resource/rejected",
+      "create": "AdmissionRejected",
+      "session": "AdmissionRejected",
+      "memory": "AdmissionRejected",
+      "revision": 0,
+      "memoryRevision": 0,
+      "oldRevision": 0,
+      "view": "7584"
+    },
+    {
+      "label": "resource/admitted",
+      "create": "Applied",
+      "session": "Applied",
+      "memory": "Applied",
+      "revision": 1,
+      "memoryRevision": 1,
+      "oldRevision": 0,
+      "oldMemoryRevision": 0,
+      "oldEntries": 0
+    },
+    {
+      "label": "resource/released",
+      "reads": 0,
+      "retained": "0",
+      "view": "0",
+      "revision": 1
+    },
+    {
+      "label": "resource/current",
+      "revision": 1,
+      "memoryRevision": 1,
+      "entries": [
+        "00000000-0000-0000-0000-000000000003"
+      ]
+    },
+    {
+      "label": "owner/disposed",
+      "outcome": "Disposed"
+    },
+    {
+      "label": "wait/disposed",
+      "outcome": "Disposed"
+    }
+  ]
+}
